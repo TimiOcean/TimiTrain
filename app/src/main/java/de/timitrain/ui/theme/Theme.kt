@@ -33,10 +33,10 @@ fun TimiTrainTheme(content: @Composable () -> Unit) {
 }
 
 /**
- * MyHand covers letters, including German umlauts, and not digits or punctuation.
- * On Android 10 and newer, characters it does not draw come from sans-serif, so
- * weights, reps, times, and the rest of the numbers stay in a readable face.
- * Sizes and line heights stay the Material 3 defaults.
+ * MyHand covers letters, including German umlauts, and not digits.
+ * Numbers are drawn in sans-serif by [Text] and [OutlinedTextField], which works
+ * from API 26. Android 10 and newer also fall back per glyph for any other
+ * character this font does not contain. Sizes and line heights stay the defaults.
  */
 private fun myHandTypography(context: Context): Typography {
     val family = myHandFamily(context)
