@@ -15,47 +15,41 @@ import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 
-private val sansNumber = SpanStyle(fontFamily = FontFamily.SansSerif)
+/**
+ * Characters present in TimiHand, taken from its cmap. Digits, comma, colon,
+ * hyphen, plus, period, and umlauts are included. × · % ß and „ are not.
+ */
+private const val TIMIHAND_GLYPHS =
+    " !\"'()*+,-./0123456789:;<=>?" +
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
+        "abcdefghijklmnopqrstuvwxyz" +
+        "\u00A0ÄÖÜäöü\u2010\u2013\u2018\u2019\u201C\u201D\u2212"
+
+private val sansFallback = SpanStyle(fontFamily = FontFamily.SansSerif)
 
 /**
- * MyHand has no digits. These runs are drawn in sans-serif so a number stays
- * readable on API 26, where the system cannot fall back per glyph.
- * The characters and their sizes are unchanged.
+ * Draws every character TimiHand contains in that face. Characters it does not
+ * contain use sans-serif, including on API 26 where the system cannot fall
+ * back per glyph. The text and its sizes stay the same.
  */
-fun String.withReadableNumbers(): AnnotatedString {
+fun String.withGlyphFallback(): AnnotatedString {
     val spans = ArrayList<AnnotatedString.Range<SpanStyle>>()
     var index = 0
     while (index < length) {
-        if (!isNumberGlyph(index)) {
+        if (this[index] in TIMIHAND_GLYPHS) {
             index++
             continue
         }
         val start = index
-        while (index < length && isNumberGlyph(index)) index++
-        spans += AnnotatedString.Range(sansNumber, start, index)
+        while (index < length && this[index] !in TIMIHAND_GLYPHS) index++
+        spans += AnnotatedString.Range(sansFallback, start, index)
     }
     return AnnotatedString(text = this, spanStyles = spans)
 }
 
-private fun String.isNumberGlyph(index: Int): Boolean {
-    val character = this[index]
-    if (character.isDigit()) return true
-    if (character == '×' || character == '·' || character == '–' || character == '+' || character == '%') {
-        return true
-    }
-    if (character == ',' || character == '.' || character == ':' || character == '-') {
-        return neighborIsDigit(index - 1) || neighborIsDigit(index + 1)
-    }
-    return false
-}
-
-private fun String.neighborIsDigit(index: Int): Boolean {
-    return index in indices && this[index].isDigit()
-}
-
-object ReadableNumbersTransformation : VisualTransformation {
+private object GlyphFallbackTransformation : VisualTransformation {
     override fun filter(text: AnnotatedString): TransformedText {
-        return TransformedText(text.text.withReadableNumbers(), OffsetMapping.Identity)
+        return TransformedText(text.text.withGlyphFallback(), OffsetMapping.Identity)
     }
 }
 
@@ -68,7 +62,7 @@ fun Text(
     style: TextStyle = LocalTextStyle.current,
 ) {
     MaterialText(
-        text = text.withReadableNumbers(),
+        text = text.withGlyphFallback(),
         modifier = modifier,
         color = color,
         textAlign = textAlign,
@@ -90,6 +84,6 @@ fun OutlinedTextField(
         modifier = modifier,
         label = label,
         singleLine = singleLine,
-        visualTransformation = ReadableNumbersTransformation,
+        visualTransformation = GlyphFallbackTransformation,
     )
 }

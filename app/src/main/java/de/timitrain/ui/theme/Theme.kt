@@ -28,18 +28,17 @@ fun TimiTrainTheme(content: @Composable () -> Unit) {
         dark -> darkColorScheme()
         else -> lightColorScheme()
     }
-    val typography = remember(context) { myHandTypography(context) }
+    val typography = remember(context) { timiHandTypography(context) }
     MaterialTheme(colorScheme = colors, typography = typography, content = content)
 }
 
 /**
- * MyHand covers letters, including German umlauts, and not digits.
- * Numbers are drawn in sans-serif by [Text] and [OutlinedTextField], which works
- * from API 26. Android 10 and newer also fall back per glyph for any other
- * character this font does not contain. Sizes and line heights stay the defaults.
+ * TimiHand is the app typeface, including digits and the punctuation it contains.
+ * Android 10 and newer also fall back per glyph to sans-serif for anything the
+ * file still lacks. Sizes and line heights stay the Material 3 defaults.
  */
-private fun myHandTypography(context: Context): Typography {
-    val family = myHandFamily(context)
+private fun timiHandTypography(context: Context): Typography {
+    val family = timiHandFamily(context)
     val base = Typography()
     return Typography(
         displayLarge = base.displayLarge.copy(fontFamily = family),
@@ -60,15 +59,15 @@ private fun myHandTypography(context: Context): Typography {
     )
 }
 
-private fun myHandFamily(context: Context): FontFamily {
+private fun timiHandFamily(context: Context): FontFamily {
     val typeface = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        val font = android.graphics.fonts.Font.Builder(context.resources, R.font.myhand_regular).build()
+        val font = android.graphics.fonts.Font.Builder(context.resources, R.font.timihand).build()
         val family = android.graphics.fonts.FontFamily.Builder(font).build()
         Typeface.CustomFallbackBuilder(family)
             .setSystemFallback("sans-serif")
             .build()
     } else {
-        ResourcesCompat.getFont(context, R.font.myhand_regular) ?: Typeface.SANS_SERIF
+        ResourcesCompat.getFont(context, R.font.timihand) ?: Typeface.SANS_SERIF
     }
     return FontFamily(typeface)
 }
