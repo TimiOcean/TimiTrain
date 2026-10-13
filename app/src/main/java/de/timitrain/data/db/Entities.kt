@@ -17,6 +17,29 @@ data class ExerciseEntity(
     val durationIncrementMin: Int? = null,
 )
 
+@Entity(
+    tableName = "exercise_default_sets",
+    foreignKeys = [
+        ForeignKey(
+            entity = ExerciseEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["exerciseId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("exerciseId")],
+)
+data class ExerciseDefaultSetEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val exerciseId: Long,
+    val position: Int,
+    val reps: Int? = null,
+    val weightKg: Double? = null,
+    val durationSec: Int? = null,
+    val durationMin: Int? = null,
+    val distanceKm: Double? = null,
+)
+
 @Entity(tableName = "workouts")
 data class WorkoutEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,

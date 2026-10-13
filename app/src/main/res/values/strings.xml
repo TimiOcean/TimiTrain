@@ -57,6 +57,9 @@
     <string name="no_exercises">Noch keine Übungen.</string>
     <string name="pick_exercise">Übung wählen</string>
     <string name="edit_increments">Schrittweiten</string>
+    <string name="edit_exercise">Übung bearbeiten</string>
+    <string name="default_sets">Standardsätze</string>
+    <string name="no_default_sets">Noch keine Standardsätze.</string>
     <string name="increments_fixed_name">Der Name bleibt, wie er angelegt wurde.</string>
     <string name="set_label">Satz %1$d</string>
     <string name="slot_label">Slot %1$d</string>

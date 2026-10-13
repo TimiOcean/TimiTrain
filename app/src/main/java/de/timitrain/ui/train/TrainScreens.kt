@@ -59,6 +59,7 @@ import de.timitrain.data.sortedGraph
 import de.timitrain.data.toValues
 import de.timitrain.domain.AppClock
 import de.timitrain.domain.ExerciseType
+import de.timitrain.domain.RepsStep
 import de.timitrain.domain.GermanNumbers
 import de.timitrain.domain.Increments
 import de.timitrain.domain.InitialNumbers
@@ -417,7 +418,6 @@ class SessionViewModel(
                         rotationIndex = rotationIndex,
                         lastTime = repository.lastValues(exercise.id, set.position),
                         increments = Increments(
-                            reps = exercise.repsIncrement,
                             weightKg = exercise.weightIncrementKg,
                             durationSec = exercise.durationIncrementSec,
                             distanceKm = exercise.distanceIncrementKm,
@@ -443,9 +443,7 @@ class SessionViewModel(
         if (index in current.completed) return
         val values = current.actuals[index]
         val updated = when (metric) {
-            Metric.REPS -> values.copy(
-                reps = SetStepper.nudgeInt(values.reps, step.increments.reps ?: InitialNumbers.REPS_INCREMENT, delta),
-            )
+            Metric.REPS -> values.copy(reps = RepsStep.nudge(values.reps, delta))
             Metric.WEIGHT -> values.copy(
                 weightKg = SetStepper.nudgeDecimal(
                     values.weightKg,

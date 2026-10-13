@@ -11,6 +11,7 @@ import de.timitrain.domain.InitialNumbers
 @Database(
     entities = [
         ExerciseEntity::class,
+        ExerciseDefaultSetEntity::class,
         WorkoutEntity::class,
         WorkoutSlotEntity::class,
         SlotAlternativeEntity::class,
@@ -22,7 +23,7 @@ import de.timitrain.domain.InitialNumbers
         SessionRotationSnapshotEntity::class,
         SettingsEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class TimiTrainDatabase : RoomDatabase() {
@@ -41,7 +42,14 @@ abstract class TimiTrainDatabase : RoomDatabase() {
                 context.applicationContext,
                 TimiTrainDatabase::class.java,
                 "timitrain.db",
-            ).addCallback(SeedCallback).addMigrations(MIGRATION_1_2).build()
+            ).addCallback(SeedCallback).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+        }
+
+        internal fun createInMemory(context: Context): TimiTrainDatabase {
+            return Room.inMemoryDatabaseBuilder(
+                context.applicationContext,
+                TimiTrainDatabase::class.java,
+            ).addCallback(SeedCallback).allowMainThreadQueries().build()
         }
     }
 }
@@ -59,6 +67,17 @@ private val MIGRATION_1_2 = object : Migration(1, 2) {
         )
         db.execSQL(
             "CREATE INDEX IF NOT EXISTS `index_session_rotation_snapshots_sessionId` ON `session_rotation_snapshots` (`sessionId`)",
+        )
+    }
+}
+
+private val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `exercise_default_sets` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `exerciseId` INTEGER NOT NULL, `position` INTEGER NOT NULL, `reps` INTEGER, `weightKg` REAL, `durationSec` INTEGER, `durationMin` INTEGER, `distanceKm` REAL, FOREIGN KEY(`exerciseId`) REFERENCES `exercises`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_exercise_default_sets_exerciseId` ON `exercise_default_sets` (`exerciseId`)",
         )
     }
 }

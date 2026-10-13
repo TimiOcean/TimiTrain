@@ -71,6 +71,21 @@ interface ExerciseDao {
 
     @Query("DELETE FROM exercises")
     suspend fun deleteAll()
+
+    @Query("SELECT * FROM exercise_default_sets WHERE exerciseId = :exerciseId ORDER BY position, id")
+    suspend fun listDefaults(exerciseId: Long): List<ExerciseDefaultSetEntity>
+
+    @Query("SELECT * FROM exercise_default_sets ORDER BY exerciseId, position, id")
+    suspend fun allDefaults(): List<ExerciseDefaultSetEntity>
+
+    @Insert
+    suspend fun insertDefault(entity: ExerciseDefaultSetEntity): Long
+
+    @Query("DELETE FROM exercise_default_sets WHERE exerciseId = :exerciseId")
+    suspend fun deleteDefaults(exerciseId: Long)
+
+    @Query("DELETE FROM exercise_default_sets")
+    suspend fun deleteAllDefaults()
 }
 
 @Dao

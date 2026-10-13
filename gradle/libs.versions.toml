@@ -11,6 +11,7 @@ activity = "1.9.3"
 navigation = "2.8.5"
 coroutines = "1.9.0"
 junit = "4.13.2"
+robolectric = "4.14.1"
 reorderable = "2.4.3"
 
 [libraries]
@@ -31,6 +32,7 @@ room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 junit = { module = "junit:junit", version.ref = "junit" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 reorderable = { module = "sh.calvin.reorderable:reorderable", version.ref = "reorderable" }
 
 [plugins]

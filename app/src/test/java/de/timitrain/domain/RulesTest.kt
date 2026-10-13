@@ -288,6 +288,41 @@ class MakeupTargetTest {
     }
 }
 
+class RepsStepTest {
+    @Test
+    fun repsStepIsAlwaysOne() {
+        assertEquals(1, RepsStep.STEP)
+        assertEquals(11, RepsStep.nudge(10, 1))
+        assertEquals(9, RepsStep.nudge(10, -1))
+        assertEquals(0, RepsStep.nudge(0, -1))
+        assertEquals(
+            11,
+            PlanAdjustment.adjust(SetValues(reps = 10), SetValues(reps = 12), ExerciseType.BODYWEIGHT).reps,
+        )
+    }
+}
+
+class DefaultSetsTest {
+    @Test
+    fun addingAnExerciseCopiesItsDefaultSets() {
+        val defaults = listOf(
+            SetValues(reps = 8, weightKg = 50.0),
+            SetValues(reps = 6, weightKg = 55.0),
+        )
+        val copied = DefaultSets.copyForSlot(defaults)
+        assertEquals(listOf(0, 1), copied.indices.toList())
+        assertEquals(8, copied[0].reps)
+        assertEquals(50.0, copied[0].weightKg!!, 0.0)
+        assertEquals(6, copied[1].reps)
+        assertEquals(55.0, copied[1].weightKg!!, 0.0)
+        val editedOnTheWorkout = copied.map { it.copy(reps = 1, weightKg = 40.0) }
+        assertEquals(8, defaults[0].reps)
+        assertEquals(50.0, defaults[0].weightKg!!, 0.0)
+        assertEquals(1, editedOnTheWorkout[0].reps)
+        assertTrue(DefaultSets.copyForSlot(emptyList()).isEmpty())
+    }
+}
+
 class BackupCodecTest {
     @Test
     fun roundTripKeepsTheFourDomainsAndRejectsAnotherVersion() {

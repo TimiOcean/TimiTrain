@@ -30,6 +30,18 @@ data class BackupExercise(
     val durationIncrementSec: Int? = null,
     val distanceIncrementKm: Double? = null,
     val durationIncrementMin: Int? = null,
+    val defaultSets: List<BackupDefaultSet> = emptyList(),
+)
+
+@Serializable
+data class BackupDefaultSet(
+    val id: Long,
+    val position: Int,
+    val reps: Int? = null,
+    val weightKg: Double? = null,
+    val durationSec: Int? = null,
+    val durationMin: Int? = null,
+    val distanceKm: Double? = null,
 )
 
 @Serializable
@@ -152,6 +164,28 @@ object BackupCodec {
         if (document.schemaVersion != SCHEMA_VERSION) return false
         if (document.exercises.any { it.id <= 0 || it.name.isBlank() || !validExercise(it) }) return false
         if (document.exercises.map { it.id }.distinct().size != document.exercises.size) return false
+        val defaultSetIds = mutableSetOf<Long>()
+        for (exercise in document.exercises) {
+            val type = exercise.type.toExerciseType()
+            for (set in exercise.defaultSets) {
+                if (set.id <= 0 || set.position < 0 || !defaultSetIds.add(set.id)) return false
+                if (!validPlanned(
+                        type,
+                        BackupPlannedSet(
+                            id = set.id,
+                            position = set.position,
+                            reps = set.reps,
+                            weightKg = set.weightKg,
+                            durationSec = set.durationSec,
+                            durationMin = set.durationMin,
+                            distanceKm = set.distanceKm,
+                        ),
+                    )
+                ) {
+                    return false
+                }
+            }
+        }
         val exerciseIds = document.exercises.map { it.id }.toSet()
         if (document.workouts.any { it.id <= 0 || it.name.isBlank() }) return false
         if (document.workouts.map { it.id }.distinct().size != document.workouts.size) return false
@@ -225,9 +259,8 @@ object BackupCodec {
             return false
         }
         return when (type) {
-            ExerciseType.STRENGTH ->
-                positive(exercise.repsIncrement) && positive(exercise.weightIncrementKg)
-            ExerciseType.BODYWEIGHT -> positive(exercise.repsIncrement)
+            ExerciseType.STRENGTH -> positive(exercise.weightIncrementKg)
+            ExerciseType.BODYWEIGHT -> true
             ExerciseType.TIMED -> positive(exercise.durationIncrementSec)
             ExerciseType.CARDIO ->
                 positive(exercise.distanceIncrementKm) && positive(exercise.durationIncrementMin)

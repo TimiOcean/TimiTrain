@@ -15,8 +15,8 @@ enum class InputProblem {
 
 fun validateIncrements(type: ExerciseType, increments: Increments): InputProblem? {
     return when (type) {
-        ExerciseType.STRENGTH -> checkPair(increments.reps, increments.weightKg)
-        ExerciseType.BODYWEIGHT -> checkStep(increments.reps)
+        ExerciseType.STRENGTH -> checkDecimal(increments.weightKg)
+        ExerciseType.BODYWEIGHT -> null
         ExerciseType.TIMED -> checkStep(increments.durationSec)
         ExerciseType.CARDIO -> checkPair(increments.durationMin, increments.distanceKm)
     }
@@ -38,16 +38,22 @@ fun validatePlanned(type: ExerciseType, values: SetValues): InputProblem? {
 
 fun defaultIncrements(type: ExerciseType): Increments {
     return when (type) {
-        ExerciseType.STRENGTH -> Increments(
-            reps = InitialNumbers.REPS_INCREMENT,
-            weightKg = InitialNumbers.WEIGHT_INCREMENT_KG,
-        )
-        ExerciseType.BODYWEIGHT -> Increments(reps = InitialNumbers.REPS_INCREMENT)
+        ExerciseType.STRENGTH -> Increments(weightKg = InitialNumbers.WEIGHT_INCREMENT_KG)
+        ExerciseType.BODYWEIGHT -> Increments()
         ExerciseType.TIMED -> Increments(durationSec = InitialNumbers.DURATION_INCREMENT_SEC)
         ExerciseType.CARDIO -> Increments(
             distanceKm = InitialNumbers.DISTANCE_INCREMENT_KM,
             durationMin = InitialNumbers.DURATION_INCREMENT_MIN,
         )
+    }
+}
+
+private fun checkDecimal(value: Double?): InputProblem? {
+    return when {
+        value == null -> InputProblem.REQUIRED
+        value < 0.0 -> InputProblem.NEGATIVE
+        value == 0.0 -> InputProblem.STEP
+        else -> null
     }
 }
 

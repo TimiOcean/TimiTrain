@@ -21,9 +21,9 @@ fun String.toExerciseType(): ExerciseType = ExerciseType.valueOf(this)
 /**
  * Initial increment and rest values. The spec requires a sensible starting
  * point and that the user can change it. These numbers are not a locked default.
+ * Wiederholungen are not listed: their step is always [RepsStep.STEP].
  */
 object InitialNumbers {
-    const val REPS_INCREMENT = 1
     const val WEIGHT_INCREMENT_KG = 2.5
     const val DURATION_INCREMENT_SEC = 5
     const val DISTANCE_INCREMENT_KM = 0.1
@@ -58,6 +58,21 @@ fun nonNegative(values: SetValues): Boolean {
 
 fun cardioHasMetric(distanceKm: Double?, durationMin: Int?): Boolean {
     return distanceKm != null || durationMin != null
+}
+
+/** Wiederholungen always move by 1. A stored reps increment is ignored. */
+object RepsStep {
+    const val STEP = 1
+
+    fun nudge(current: Int?, delta: Int): Int = SetStepper.nudgeInt(current, STEP, delta)
+}
+
+/**
+ * Values copied onto a new slot alternative. The result is a new list, so later
+ * edits of the workout sets and of the exercise defaults do not share rows.
+ */
+object DefaultSets {
+    fun copyForSlot(defaults: List<SetValues>): List<SetValues> = defaults.map { it.copy() }
 }
 
 object SetStepper {

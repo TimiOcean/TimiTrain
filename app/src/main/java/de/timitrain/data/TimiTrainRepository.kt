@@ -2,6 +2,7 @@ package de.timitrain.data
 
 import androidx.room.withTransaction
 import de.timitrain.data.backup.BackupAlternative
+import de.timitrain.data.backup.BackupDefaultSet
 import de.timitrain.data.backup.BackupDocument
 import de.timitrain.data.backup.BackupExercise
 import de.timitrain.data.backup.BackupPlanSnapshot
@@ -13,6 +14,7 @@ import de.timitrain.data.backup.BackupSlot
 import de.timitrain.data.backup.BackupWeekDay
 import de.timitrain.data.backup.BackupWorkout
 import de.timitrain.data.db.AlternativeGraph
+import de.timitrain.data.db.ExerciseDefaultSetEntity
 import de.timitrain.data.db.ExerciseEntity
 import de.timitrain.data.db.PlannedSetEntity
 import de.timitrain.data.db.SessionEntity
@@ -28,7 +30,9 @@ import de.timitrain.data.db.WeekDayRow
 import de.timitrain.data.db.WorkoutEntity
 import de.timitrain.data.db.WorkoutGraph
 import de.timitrain.data.db.WorkoutSlotEntity
+import de.timitrain.domain.DefaultSets
 import de.timitrain.domain.ExerciseType
+import de.timitrain.domain.defaultIncrements
 import de.timitrain.domain.Increments
 import de.timitrain.domain.InitialNumbers
 import de.timitrain.domain.PlanAdjustment
@@ -56,31 +60,52 @@ class TimiTrainRepository(
         name: String,
         type: ExerciseType,
         increments: Increments,
-    ): Long {
-        return db.exercises().insert(
+        defaultSets: List<SetValues>,
+    ): Long = db.withTransaction {
+        val id = db.exercises().insert(
             ExerciseEntity(
                 name = name.trim(),
                 type = type.stored(),
-                repsIncrement = increments.reps,
                 weightIncrementKg = increments.weightKg,
                 durationIncrementSec = increments.durationSec,
                 distanceIncrementKm = increments.distanceKm,
                 durationIncrementMin = increments.durationMin,
             ),
         )
+        insertDefaultSets(id, defaultSets)
+        id
     }
 
-    suspend fun updateIncrements(id: Long, increments: Increments) {
-        val existing = db.exercises().get(id) ?: return
+    suspend fun defaultSets(exerciseId: Long): List<SetValues> {
+        return db.exercises().listDefaults(exerciseId).map { it.toValues() }
+    }
+
+    suspend fun updateExercise(id: Long, increments: Increments, defaultSets: List<SetValues>) = db.withTransaction {
+        val existing = db.exercises().get(id) ?: return@withTransaction
         db.exercises().update(
             existing.copy(
-                repsIncrement = increments.reps,
+                repsIncrement = null,
                 weightIncrementKg = increments.weightKg,
                 durationIncrementSec = increments.durationSec,
                 distanceIncrementKm = increments.distanceKm,
                 durationIncrementMin = increments.durationMin,
             ),
         )
+        db.exercises().deleteDefaults(id)
+        insertDefaultSets(id, defaultSets)
+    }
+
+    private suspend fun insertDefaultSets(exerciseId: Long, sets: List<SetValues>) {
+        DefaultSets.copyForSlot(sets).forEachIndexed { index, values ->
+            db.exercises().insertDefault(values.toDefaultEntity(exerciseId, index))
+        }
+    }
+
+    private suspend fun copyDefaultsOnto(exerciseId: Long, alternativeId: Long) {
+        val defaults = db.exercises().listDefaults(exerciseId).map { it.toValues() }
+        DefaultSets.copyForSlot(defaults).forEachIndexed { index, values ->
+            db.plannedSets().insert(values.toEntity(alternativeId, index))
+        }
     }
 
     fun observeWorkouts(): Flow<List<WorkoutEntity>> = db.workouts().observeAll()
@@ -135,17 +160,19 @@ class TimiTrainRepository(
         val slotId = db.slots().insert(
             WorkoutSlotEntity(workoutId = workoutId, position = position, rotationIndex = 0),
         )
-        db.alternatives().insert(
+        val alternativeId = db.alternatives().insert(
             SlotAlternativeEntity(slotId = slotId, exerciseId = exerciseId, position = 0),
         )
+        copyDefaultsOnto(exerciseId, alternativeId)
     }
 
     suspend fun addAlternative(slotId: Long, exerciseId: Long) = db.withTransaction {
         val existing = db.alternatives().listForSlot(slotId)
         val position = (existing.maxOfOrNull { it.position } ?: -1) + 1
-        db.alternatives().insert(
+        val alternativeId = db.alternatives().insert(
             SlotAlternativeEntity(slotId = slotId, exerciseId = exerciseId, position = position),
         )
+        copyDefaultsOnto(exerciseId, alternativeId)
         val slot = db.slots().get(slotId) ?: return@withTransaction
         db.slots().updateRotation(slotId, Rotation.normalize(slot.rotationIndex, existing.size + 1))
     }
@@ -219,6 +246,57 @@ class TimiTrainRepository(
 
     suspend fun setWeekday(weekday: Int, workoutId: Long?) {
         db.weekPlan().setWorkout(weekday, workoutId)
+    }
+
+    /**
+     * Inserts the starter catalog only when the user has no exercises yet.
+     * A later launch, or a database that already has an exercise, is left unchanged.
+     */
+    suspend fun seedStarterPlanIfEmpty() = db.withTransaction {
+        if (db.exercises().listAll().isNotEmpty()) return@withTransaction
+        val exerciseIds = LinkedHashMap<String, Long>()
+        for (exercise in StarterPlan.exercises) {
+            val id = createExercise(
+                exercise.name,
+                exercise.type,
+                defaultIncrements(exercise.type),
+                exercise.sets,
+            )
+            val previous = exerciseIds.put(exercise.name, id)
+            check(previous == null) { exercise.name }
+        }
+        val workoutIds = LinkedHashMap<String, Long>()
+        for (workout in StarterPlan.workouts) {
+            val workoutId = createWorkout(workout.name)
+            workoutIds[workout.name] = workoutId
+            for (slot in workout.slots) {
+                addSlot(workoutId, exerciseIds.getValue(slot.alternatives.first()))
+                val slotId = db.slots().listForWorkout(workoutId).maxBy { it.position }.id
+                for (name in slot.alternatives.drop(1)) {
+                    addAlternative(slotId, exerciseIds.getValue(name))
+                }
+                if (slot.plannedSets.isNotEmpty()) {
+                    replacePlannedSets(
+                        slotId,
+                        slot.plannedSets.mapKeys { exerciseIds.getValue(it.key) },
+                    )
+                }
+            }
+        }
+        for (weekday in 1..7) {
+            val workoutName = StarterPlan.week[weekday]
+            setWeekday(weekday, workoutName?.let { workoutIds.getValue(it) })
+        }
+    }
+
+    private suspend fun replacePlannedSets(slotId: Long, planned: Map<Long, List<SetValues>>) {
+        for (alternative in db.alternatives().listForSlot(slotId)) {
+            val sets = planned[alternative.exerciseId] ?: continue
+            db.plannedSets().listForAlternative(alternative.id).forEach { db.plannedSets().delete(it.id) }
+            sets.forEachIndexed { index, values ->
+                db.plannedSets().insert(values.toEntity(alternative.id, index))
+            }
+        }
     }
 
     fun observeSessions(): Flow<List<SessionEntity>> = db.sessions().observeAll()
@@ -338,7 +416,10 @@ class TimiTrainRepository(
     }
 
     suspend fun exportDocument(): BackupDocument {
-        val exercises = db.exercises().listAll().map { it.toBackup() }
+        val defaultsByExercise = db.exercises().allDefaults().groupBy { it.exerciseId }
+        val exercises = db.exercises().listAll().map { exercise ->
+            exercise.toBackup(defaultsByExercise[exercise.id].orEmpty())
+        }
         val workouts = db.workouts().loadAllGraphs().map { it.sortedGraph().toBackup() }
         val week = db.weekPlan().list().map { BackupWeekDay(it.weekday, it.workoutId) }
         val plansBySession = db.sessions().allPlanSnapshots().groupBy { it.sessionId }
@@ -364,9 +445,13 @@ class TimiTrainRepository(
         db.sessions().deleteAllSets()
         db.sessions().deleteAll()
         db.workouts().deleteAll()
+        db.exercises().deleteAllDefaults()
         db.exercises().deleteAll()
         for (exercise in document.exercises) {
             db.exercises().insert(exercise.toEntity())
+            for (set in exercise.defaultSets.sortedBy { it.position }) {
+                db.exercises().insertDefault(set.toEntity(exercise.id))
+            }
         }
         for (workout in document.workouts) {
             db.workouts().insert(WorkoutEntity(id = workout.id, name = workout.name))
@@ -484,7 +569,7 @@ private fun SetValues.toEntity(alternativeId: Long, position: Int): PlannedSetEn
     )
 }
 
-private fun ExerciseEntity.toBackup(): BackupExercise {
+private fun ExerciseEntity.toBackup(defaults: List<ExerciseDefaultSetEntity>): BackupExercise {
     return BackupExercise(
         id = id,
         name = name,
@@ -494,6 +579,46 @@ private fun ExerciseEntity.toBackup(): BackupExercise {
         durationIncrementSec = durationIncrementSec,
         distanceIncrementKm = distanceIncrementKm,
         durationIncrementMin = durationIncrementMin,
+        defaultSets = defaults.sortedBy { it.position }.map { set ->
+            BackupDefaultSet(
+                id = set.id,
+                position = set.position,
+                reps = set.reps,
+                weightKg = set.weightKg,
+                durationSec = set.durationSec,
+                durationMin = set.durationMin,
+                distanceKm = set.distanceKm,
+            )
+        },
+    )
+}
+
+private fun ExerciseDefaultSetEntity.toValues(): SetValues {
+    return SetValues(reps, weightKg, durationSec, durationMin, distanceKm)
+}
+
+private fun SetValues.toDefaultEntity(exerciseId: Long, position: Int): ExerciseDefaultSetEntity {
+    return ExerciseDefaultSetEntity(
+        exerciseId = exerciseId,
+        position = position,
+        reps = reps,
+        weightKg = weightKg,
+        durationSec = durationSec,
+        durationMin = durationMin,
+        distanceKm = distanceKm,
+    )
+}
+
+private fun BackupDefaultSet.toEntity(exerciseId: Long): ExerciseDefaultSetEntity {
+    return ExerciseDefaultSetEntity(
+        id = id,
+        exerciseId = exerciseId,
+        position = position,
+        reps = reps,
+        weightKg = weightKg,
+        durationSec = durationSec,
+        durationMin = durationMin,
+        distanceKm = distanceKm,
     )
 }
 

@@ -1,6 +1,8 @@
 package de.timitrain.ui.planen
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -33,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,11 +53,14 @@ import de.timitrain.data.db.ExerciseEntity
 import de.timitrain.data.db.WeekDayRow
 import de.timitrain.data.db.WorkoutEntity
 import de.timitrain.domain.ExerciseType
+import de.timitrain.domain.GermanNumbers
 import de.timitrain.domain.Increments
 import de.timitrain.domain.InputProblem
+import de.timitrain.domain.SetValues
 import de.timitrain.domain.defaultIncrements
 import de.timitrain.domain.toExerciseType
 import de.timitrain.domain.validateIncrements
+import de.timitrain.domain.validatePlanned
 import de.timitrain.ui.Routes
 import de.timitrain.ui.exerciseTypeLabel
 import de.timitrain.ui.problemText
@@ -419,6 +425,8 @@ fun ExerciseCreateRoute(onBack: () -> Unit, onCreated: (Long) -> Unit) {
     var name by remember { mutableStateOf("") }
     var type by remember { mutableStateOf(ExerciseType.STRENGTH) }
     var increments by remember { mutableStateOf(defaultIncrements(ExerciseType.STRENGTH)) }
+    var sets by remember { mutableStateOf(listOf<SetValues>()) }
+    var setDialog by remember { mutableStateOf<DefaultSetDialogState?>(null) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -432,7 +440,7 @@ fun ExerciseCreateRoute(onBack: () -> Unit, onCreated: (Long) -> Unit) {
         },
     ) { padding ->
         Column(
-            Modifier.padding(padding).padding(16.dp),
+            Modifier.padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             OutlinedTextField(
@@ -450,18 +458,56 @@ fun ExerciseCreateRoute(onBack: () -> Unit, onCreated: (Long) -> Unit) {
                         onClick = {
                             type = candidate
                             increments = defaultIncrements(candidate)
+                            sets = emptyList()
+                            setDialog = null
                         },
                         label = { Text(exerciseTypeLabel(candidate)) },
                     )
                 }
             }
             IncrementFields(type = type, increments = increments, onChange = { increments = it })
+            DefaultSetList(
+                type = type,
+                sets = sets,
+                onEdit = { index -> setDialog = sets[index].toDialog(index) },
+                onAdd = { setDialog = DefaultSetDialogState(index = null) },
+            )
             error?.let { Text(problemText(it), color = MaterialTheme.colorScheme.error) }
-                OutlinedButton(
-                onClick = { vm.save(name, type, increments, onCreated) },
+            OutlinedButton(
+                onClick = { vm.save(name, type, increments, sets, onCreated) },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(stringResource(R.string.save)) }
         }
+    }
+    setDialog?.let { dialog ->
+        DefaultSetDialog(
+            type = type,
+            dialog = dialog,
+            onChange = { setDialog = it },
+            onDismiss = { setDialog = null },
+            onDelete = {
+                dialog.index?.let { index -> sets = sets.filterIndexed { i, _ -> i != index } }
+                setDialog = null
+            },
+            onSave = {
+                val values = dialog.toValues()
+                if (values == null) {
+                    setDialog = dialog.copy(error = InputProblem.NUMBER)
+                    return@DefaultSetDialog
+                }
+                val problem = validatePlanned(type, values)
+                if (problem != null) {
+                    setDialog = dialog.copy(error = problem)
+                    return@DefaultSetDialog
+                }
+                sets = if (dialog.index == null) {
+                    sets + values
+                } else {
+                    sets.toMutableList().also { it[dialog.index] = values }
+                }
+                setDialog = null
+            },
+        )
     }
 }
 
@@ -471,7 +517,13 @@ class ExerciseCreateViewModel(
     private val _error = kotlinx.coroutines.flow.MutableStateFlow<InputProblem?>(null)
     val error: StateFlow<InputProblem?> = _error
 
-    fun save(name: String, type: ExerciseType, increments: Increments, onDone: (Long) -> Unit) {
+    fun save(
+        name: String,
+        type: ExerciseType,
+        increments: Increments,
+        defaultSets: List<SetValues>,
+        onDone: (Long) -> Unit,
+    ) {
         if (name.isBlank()) {
             _error.value = InputProblem.NAME
             return
@@ -482,7 +534,7 @@ class ExerciseCreateViewModel(
             return
         }
         viewModelScope.launch {
-            val id = repository.createExercise(name, type, increments)
+            val id = repository.createExercise(name, type, increments, defaultSets)
             onDone(id)
         }
     }
@@ -500,13 +552,25 @@ fun ExerciseEditRoute(exerciseId: Long?, onBack: () -> Unit) {
         key = "exercise-$exerciseId",
         factory = viewModelFactory { ExerciseEditViewModel(app.repository, exerciseId) },
     )
-    val exercise by vm.exercise.collectAsState()
+    val form by vm.form.collectAsState()
     val error by vm.error.collectAsState()
-    val current = exercise
+    val current = form
+    var increments by remember { mutableStateOf(Increments()) }
+    var sets by remember { mutableStateOf(listOf<SetValues>()) }
+    var ready by remember { mutableStateOf(false) }
+    var setDialog by remember { mutableStateOf<DefaultSetDialogState?>(null) }
+    LaunchedEffect(current) {
+        val loaded = current ?: return@LaunchedEffect
+        if (!ready) {
+            increments = loaded.increments
+            sets = loaded.sets
+            ready = true
+        }
+    }
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.edit_increments)) },
+                title = { Text(stringResource(R.string.edit_exercise)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
@@ -515,55 +579,108 @@ fun ExerciseEditRoute(exerciseId: Long?, onBack: () -> Unit) {
             )
         },
     ) { padding ->
-        if (current == null) {
+        if (current == null || !ready) {
             Text(stringResource(R.string.no_exercises), modifier = Modifier.padding(padding).padding(16.dp))
         } else {
-            val type = current.type.toExerciseType()
-            var increments by remember(current.id) {
-                mutableStateOf(
-                    Increments(
-                        reps = current.repsIncrement,
-                        weightKg = current.weightIncrementKg,
-                        durationSec = current.durationIncrementSec,
-                        distanceKm = current.distanceIncrementKm,
-                        durationMin = current.durationIncrementMin,
-                    ),
-                )
-            }
+            val type = current.type
             Column(
-                Modifier.padding(padding).padding(16.dp),
+                Modifier.padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(current.name, style = MaterialTheme.typography.headlineSmall)
                 Text(exerciseTypeLabel(type))
+                Text(stringResource(R.string.increments_fixed_name))
                 IncrementFields(type = type, increments = increments, onChange = { increments = it })
+                DefaultSetList(
+                    type = type,
+                    sets = sets,
+                    onEdit = { index -> setDialog = sets[index].toDialog(index) },
+                    onAdd = { setDialog = DefaultSetDialogState(index = null) },
+                )
                 error?.let { Text(problemText(it), color = MaterialTheme.colorScheme.error) }
                 OutlinedButton(
-                    onClick = { vm.save(type, increments, onBack) },
+                    onClick = { vm.save(type, increments, sets, onBack) },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(stringResource(R.string.save)) }
             }
         }
     }
+    val type = current?.type
+    if (type != null) {
+        setDialog?.let { dialog ->
+            DefaultSetDialog(
+                type = type,
+                dialog = dialog,
+                onChange = { setDialog = it },
+                onDismiss = { setDialog = null },
+                onDelete = {
+                    dialog.index?.let { index -> sets = sets.filterIndexed { i, _ -> i != index } }
+                    setDialog = null
+                },
+                onSave = {
+                    val values = dialog.toValues()
+                    if (values == null) {
+                        setDialog = dialog.copy(error = InputProblem.NUMBER)
+                        return@DefaultSetDialog
+                    }
+                    val problem = validatePlanned(type, values)
+                    if (problem != null) {
+                        setDialog = dialog.copy(error = problem)
+                        return@DefaultSetDialog
+                    }
+                    sets = if (dialog.index == null) {
+                        sets + values
+                    } else {
+                        sets.toMutableList().also { it[dialog.index] = values }
+                    }
+                    setDialog = null
+                },
+            )
+        }
+    }
 }
+
+data class ExerciseForm(
+    val name: String,
+    val type: ExerciseType,
+    val increments: Increments,
+    val sets: List<SetValues>,
+)
 
 class ExerciseEditViewModel(
     private val repository: de.timitrain.data.TimiTrainRepository,
     private val exerciseId: Long,
 ) : ViewModel() {
-    val exercise = repository.observeExercise(exerciseId)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    private val _form = kotlinx.coroutines.flow.MutableStateFlow<ExerciseForm?>(null)
+    val form: StateFlow<ExerciseForm?> = _form
     private val _error = kotlinx.coroutines.flow.MutableStateFlow<InputProblem?>(null)
     val error: StateFlow<InputProblem?> = _error
 
-    fun save(type: ExerciseType, increments: Increments, onDone: () -> Unit) {
+    init {
+        viewModelScope.launch {
+            val exercise = repository.exercise(exerciseId) ?: return@launch
+            _form.value = ExerciseForm(
+                name = exercise.name,
+                type = exercise.type.toExerciseType(),
+                increments = Increments(
+                    weightKg = exercise.weightIncrementKg,
+                    durationSec = exercise.durationIncrementSec,
+                    distanceKm = exercise.distanceIncrementKm,
+                    durationMin = exercise.durationIncrementMin,
+                ),
+                sets = repository.defaultSets(exerciseId),
+            )
+        }
+    }
+
+    fun save(type: ExerciseType, increments: Increments, defaultSets: List<SetValues>, onDone: () -> Unit) {
         val problem = validateIncrements(type, increments)
         if (problem != null) {
             _error.value = problem
             return
         }
         viewModelScope.launch {
-            repository.updateIncrements(exerciseId, increments)
+            repository.updateExercise(exerciseId, increments, defaultSets)
             onDone()
         }
     }
@@ -575,17 +692,6 @@ fun IncrementFields(
     increments: Increments,
     onChange: (Increments) -> Unit,
 ) {
-    when (type) {
-        ExerciseType.STRENGTH, ExerciseType.BODYWEIGHT -> {
-            IntField(
-                label = stringResource(R.string.reps_step),
-                value = increments.reps,
-                resetKey = type,
-                onValue = { onChange(increments.copy(reps = it)) },
-            )
-        }
-        else -> Unit
-    }
     if (type == ExerciseType.STRENGTH) {
         DecimalField(
             label = stringResource(R.string.weight_step),
@@ -645,5 +751,149 @@ private fun DecimalField(label: String, value: Double?, resetKey: Any, onValue: 
         label = { Text(label) },
         singleLine = true,
         modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+@Composable
+private fun DefaultSetList(
+    type: ExerciseType,
+    sets: List<SetValues>,
+    onEdit: (Int) -> Unit,
+    onAdd: () -> Unit,
+) {
+    Text(stringResource(R.string.default_sets), style = MaterialTheme.typography.titleMedium)
+    if (sets.isEmpty()) {
+        Text(stringResource(R.string.no_default_sets))
+    }
+    sets.forEachIndexed { index, values ->
+        ListItem(
+            headlineContent = { Text(stringResource(R.string.set_label, index + 1)) },
+            supportingContent = { Text(GermanNumbers.formatSet(values, type)) },
+            trailingContent = {
+                TextButton(onClick = { onEdit(index) }) { Text(stringResource(R.string.edit)) }
+            },
+        )
+    }
+    TextButton(onClick = onAdd) { Text(stringResource(R.string.add_set)) }
+}
+
+private data class DefaultSetDialogState(
+    val index: Int?,
+    val reps: String = "",
+    val weight: String = "",
+    val seconds: String = "",
+    val minutes: String = "",
+    val distance: String = "",
+    val error: InputProblem? = null,
+)
+
+private fun SetValues.toDialog(index: Int): DefaultSetDialogState {
+    return DefaultSetDialogState(
+        index = index,
+        reps = reps?.toString().orEmpty(),
+        weight = weightKg?.let(GermanNumbers::format).orEmpty(),
+        seconds = durationSec?.toString().orEmpty(),
+        minutes = durationMin?.toString().orEmpty(),
+        distance = distanceKm?.let(GermanNumbers::format).orEmpty(),
+    )
+}
+
+private fun DefaultSetDialogState.toValues(): SetValues? {
+    val reps = draftWhole(reps) ?: return null
+    val weight = draftDecimal(weight) ?: return null
+    val seconds = draftWhole(seconds) ?: return null
+    val minutes = draftWhole(minutes) ?: return null
+    val distance = draftDecimal(distance) ?: return null
+    return SetValues(
+        reps = reps.value,
+        weightKg = weight.value,
+        durationSec = seconds.value,
+        durationMin = minutes.value,
+        distanceKm = distance.value,
+    )
+}
+
+private data class DraftNumber<T>(val value: T?)
+
+private fun draftWhole(text: String): DraftNumber<Int>? {
+    if (text.isBlank()) return DraftNumber(null)
+    val value = text.trim().toIntOrNull() ?: return null
+    return DraftNumber(value)
+}
+
+private fun draftDecimal(text: String): DraftNumber<Double>? {
+    if (text.isBlank()) return DraftNumber(null)
+    val value = GermanNumbers.parse(text) ?: return null
+    return DraftNumber(value)
+}
+
+@Composable
+private fun DefaultSetDialog(
+    type: ExerciseType,
+    dialog: DefaultSetDialogState,
+    onChange: (DefaultSetDialogState) -> Unit,
+    onSave: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(if (dialog.index == null) stringResource(R.string.add_set) else stringResource(R.string.edit_set))
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (type == ExerciseType.STRENGTH || type == ExerciseType.BODYWEIGHT) {
+                    OutlinedTextField(
+                        value = dialog.reps,
+                        onValueChange = { onChange(dialog.copy(reps = it, error = null)) },
+                        label = { Text(stringResource(R.string.reps)) },
+                        singleLine = true,
+                    )
+                }
+                if (type == ExerciseType.STRENGTH) {
+                    OutlinedTextField(
+                        value = dialog.weight,
+                        onValueChange = { onChange(dialog.copy(weight = it, error = null)) },
+                        label = { Text(stringResource(R.string.weight_kg)) },
+                        singleLine = true,
+                    )
+                }
+                if (type == ExerciseType.TIMED) {
+                    OutlinedTextField(
+                        value = dialog.seconds,
+                        onValueChange = { onChange(dialog.copy(seconds = it, error = null)) },
+                        label = { Text(stringResource(R.string.duration_sec)) },
+                        singleLine = true,
+                    )
+                }
+                if (type == ExerciseType.CARDIO) {
+                    OutlinedTextField(
+                        value = dialog.distance,
+                        onValueChange = { onChange(dialog.copy(distance = it, error = null)) },
+                        label = { Text(stringResource(R.string.distance_km)) },
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = dialog.minutes,
+                        onValueChange = { onChange(dialog.copy(minutes = it, error = null)) },
+                        label = { Text(stringResource(R.string.duration_min)) },
+                        singleLine = true,
+                    )
+                }
+                dialog.error?.let { Text(problemText(it), color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onSave) { Text(stringResource(R.string.save)) }
+        },
+        dismissButton = {
+            Row {
+                if (dialog.index != null) {
+                    TextButton(onClick = onDelete) { Text(stringResource(R.string.remove_set)) }
+                }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+            }
+        },
     )
 }

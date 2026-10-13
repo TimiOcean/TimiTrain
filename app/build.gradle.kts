@@ -68,5 +68,6 @@ dependencies {
     implementation(libs.coroutines.android)
     implementation(libs.reorderable)
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
     debugImplementation(libs.compose.ui.tooling)
 }
