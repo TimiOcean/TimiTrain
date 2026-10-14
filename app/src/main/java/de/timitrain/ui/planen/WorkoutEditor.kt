@@ -1,17 +1,21 @@
 package de.timitrain.ui.planen
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material3.AlertDialog
@@ -49,14 +53,20 @@ import de.timitrain.data.TimiTrainRepository
 import de.timitrain.data.db.ExerciseEntity
 import de.timitrain.data.sortedGraph
 import de.timitrain.data.toValues
+import de.timitrain.domain.CategorizedSlot
+import de.timitrain.domain.ExerciseCategory
 import de.timitrain.domain.ExerciseType
 import de.timitrain.domain.GermanNumbers
 import de.timitrain.domain.InputProblem
 import de.timitrain.domain.SetValues
+import de.timitrain.domain.WorkoutSections
+import de.timitrain.domain.toExerciseCategory
 import de.timitrain.domain.toExerciseType
 import de.timitrain.domain.validatePlanned
 import de.timitrain.ui.Routes
+import de.timitrain.ui.categoryLabel
 import de.timitrain.ui.exerciseTypeLabel
+import de.timitrain.ui.markColor
 import de.timitrain.ui.problemText
 import de.timitrain.ui.rememberApp
 import de.timitrain.ui.viewModelFactory
@@ -69,6 +79,9 @@ import sh.calvin.reorderable.rememberReorderableLazyListState
 
 data class SlotUi(
     val id: Long,
+    val position: Int,
+    val category: ExerciseCategory,
+    val title: String,
     val alternatives: List<AlternativeUi>,
 )
 
@@ -161,24 +174,8 @@ class WorkoutEditorViewModel(
         reload()
     }
 
-    fun rename(name: String) {
-        val trimmed = name.trim()
-        if (trimmed.isEmpty()) {
-            _state.value = _state.value.copy(error = InputProblem.NAME)
-            return
-        }
-        viewModelScope.launch {
-            repository.renameWorkout(workoutId, trimmed)
-            _state.value = _state.value.copy(error = null, name = trimmed)
-        }
-    }
-
-    fun reorderSlots(orderedIds: List<Long>) {
-        viewModelScope.launch { repository.reorderSlots(workoutId, orderedIds) }
-    }
-
-    fun reorderAlternatives(slotId: Long, orderedIds: List<Long>) {
-        viewModelScope.launch { repository.reorderAlternatives(slotId, orderedIds) }
+    fun reorderWithin(positions: Map<Long, Int>) {
+        viewModelScope.launch { repository.reorderSlotPositions(positions) }
     }
 
     fun openNewSlotPicker() {
@@ -298,29 +295,6 @@ class WorkoutEditorViewModel(
         }
     }
 
-    fun requestDelete() {
-        viewModelScope.launch {
-            _state.value = _state.value.copy(deleteDays = repository.weekdaysUsing(workoutId))
-        }
-    }
-
-    fun dismissDelete() {
-        _state.value = _state.value.copy(deleteDays = null)
-    }
-
-    fun confirmDelete(onDeleted: () -> Unit) {
-        viewModelScope.launch {
-            repository.deleteWorkout(workoutId)
-            onDeleted()
-        }
-    }
-
-    fun duplicate(onCreated: (Long) -> Unit) {
-        viewModelScope.launch {
-            repository.duplicateWorkout(workoutId)?.let(onCreated)
-        }
-    }
-
     private fun reload() {
         viewModelScope.launch {
             val graph = repository.loadWorkout(workoutId)?.sortedGraph()
@@ -334,8 +308,12 @@ class WorkoutEditorViewModel(
                 missing = false,
                 name = graph.workout.name,
                 slots = graph.slots.map { slot ->
+                    val primary = slot.alternatives.firstOrNull()
                     SlotUi(
                         id = slot.slot.id,
+                        position = slot.slot.position,
+                        category = primary?.exercise?.category?.toExerciseCategory() ?: ExerciseCategory.STRENGTH,
+                        title = primary?.exercise?.name.orEmpty(),
                         alternatives = slot.alternatives.map { alternative ->
                             AlternativeUi(
                                 id = alternative.alternative.id,
@@ -402,8 +380,9 @@ private fun WorkoutEditorScreen(
                     }
                 },
                 actions = {
-                    TextButton(onClick = { vm.duplicate { } }) { Text(stringResource(R.string.duplicate)) }
-                    TextButton(onClick = vm::requestDelete) { Text(stringResource(R.string.delete)) }
+                    IconButton(onClick = vm::openNewSlotPicker) {
+                        Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.add_exercise))
+                    }
                 },
             )
         },
@@ -412,53 +391,51 @@ private fun WorkoutEditorScreen(
             Text(stringResource(R.string.plan_empty), modifier = Modifier.padding(padding).padding(16.dp))
             return@Scaffold
         }
-        var slots by remember(state.slots) { mutableStateOf(state.slots) }
+        var grouped by remember(state.slots) {
+            mutableStateOf(state.slots.groupedByCategory())
+        }
+        var expanded by remember { mutableStateOf(setOf<Long>()) }
         val lazyListState = rememberLazyListState()
         val reorderState = rememberReorderableLazyListState(lazyListState) { from, to ->
-            slots = slots.toMutableList().apply {
-                if (from.index in indices && to.index in indices) {
-                    add(to.index, removeAt(from.index))
-                }
-            }
-            vm.reorderSlots(slots.map { it.id })
+            val fromId = from.key as? Long ?: return@rememberReorderableLazyListState
+            val toId = to.key as? Long ?: return@rememberReorderableLazyListState
+            val fromSlot = grouped.values.flatten().find { it.id == fromId } ?: return@rememberReorderableLazyListState
+            val toSlot = grouped.values.flatten().find { it.id == toId } ?: return@rememberReorderableLazyListState
+            if (fromSlot.category != toSlot.category) return@rememberReorderableLazyListState
+            val section = grouped.getValue(fromSlot.category).toMutableList()
+            val fromIndex = section.indexOfFirst { it.id == fromId }
+            val toIndex = section.indexOfFirst { it.id == toId }
+            if (fromIndex < 0 || toIndex < 0 || fromIndex == toIndex) return@rememberReorderableLazyListState
+            section.add(toIndex, section.removeAt(fromIndex))
+            val catalog = grouped.values.flatten().map { CategorizedSlot(it.id, it.position, it.category) }
+            val updates = WorkoutSections.positionsAfterReorder(catalog, fromSlot.category, section.map { it.id })
+            val placed = section.map { slot -> slot.copy(position = updates.getValue(slot.id)) }
+            grouped = grouped + (fromSlot.category to placed)
+            expanded = emptySet()
+            vm.reorderWithin(updates)
         }
-        Column(Modifier.padding(padding).fillMaxSize()) {
-            var name by remember(state.name) { mutableStateOf(state.name) }
-            var focused by remember { mutableStateOf(false) }
-            LaunchedEffect(state.name, focused) {
-                if (!focused) name = state.name
-            }
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text(stringResource(R.string.name)) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .onFocusChanged {
-                        val wasFocused = focused
-                        focused = it.isFocused
-                        if (wasFocused && !it.isFocused) vm.rename(name)
-                    },
-                singleLine = true,
-            )
-            state.error?.let {
-                Text(problemText(it), color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
-            }
-            LazyColumn(
-                state = lazyListState,
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-            ) {
-                items(slots, key = { it.id }) { slot ->
+        LazyColumn(
+            state = lazyListState,
+            modifier = Modifier.padding(padding).fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+        ) {
+            ExerciseCategory.entries.forEach { category ->
+                item(key = "section-$category") {
+                    SectionHeader(category)
+                }
+                items(grouped.getValue(category), key = { it.id }) { slot ->
                     ReorderableItem(reorderState, key = slot.id) { _ ->
                         SlotCard(
                             slot = slot,
-                            index = slots.indexOfFirst { it.id == slot.id } + 1,
-                            dragHandle = Modifier.draggableHandle(),
+                            expanded = slot.id in expanded,
+                            dragHandle = Modifier.draggableHandle(
+                                onDragStarted = { expanded = emptySet() },
+                            ),
+                            onToggle = {
+                                expanded = if (slot.id in expanded) expanded - slot.id else expanded + slot.id
+                            },
                             onRemove = { vm.removeSlot(slot.id) },
-                            onReorderAlternatives = { ids -> vm.reorderAlternatives(slot.id, ids) },
                             onAddAlternative = { vm.openAlternativePicker(slot.id) },
                             onRemoveAlternative = vm::removeAlternative,
                             onRest = vm::setRest,
@@ -468,22 +445,26 @@ private fun WorkoutEditorScreen(
                     }
                 }
             }
-            OutlinedButton(
-                onClick = vm::openNewSlotPicker,
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-            ) { Text(stringResource(R.string.add_slot)) }
         }
     }
     if (state.pickerForNewSlot || state.pickerSlotId != null) {
         AlertDialog(
             onDismissRequest = vm::dismissPicker,
-            title = { Text(stringResource(R.string.pick_exercise)) },
+            title = {
+                Text(
+                    stringResource(
+                        if (state.pickerForNewSlot) R.string.add_exercise else R.string.pick_exercise,
+                    ),
+                )
+            },
             text = {
                 Column {
                     if (state.exercises.isEmpty()) Text(stringResource(R.string.no_exercises))
                     state.exercises.forEach { exercise ->
                         TextButton(onClick = { vm.pickExercise(exercise.id) }) {
-                            Text("${exercise.name} · ${exerciseTypeLabel(exercise.type.toExerciseType())}")
+                            Text(exercise.name)
+                            val category = exercise.category.toExerciseCategory()
+                            Text(categoryLabel(category), color = category.markColor())
                         }
                     }
                     TextButton(onClick = onCreateExercise) { Text(stringResource(R.string.new_exercise)) }
@@ -500,89 +481,70 @@ private fun WorkoutEditorScreen(
             dialog.setId?.let(vm::deleteSet)
         }, onDismiss = vm::dismissSet)
     }
-    val deleteDays = state.deleteDays
-    if (deleteDays != null) {
-        val name = state.name
-        val dayNames = listOf(
-            stringResource(R.string.weekday_mon),
-            stringResource(R.string.weekday_tue),
-            stringResource(R.string.weekday_wed),
-            stringResource(R.string.weekday_thu),
-            stringResource(R.string.weekday_fri),
-            stringResource(R.string.weekday_sat),
-            stringResource(R.string.weekday_sun),
+}
+
+private fun List<SlotUi>.groupedByCategory(): Map<ExerciseCategory, List<SlotUi>> {
+    return ExerciseCategory.entries.associateWith { category ->
+        filter { it.category == category }.sortedBy { it.position }
+    }
+}
+
+@Composable
+private fun SectionHeader(category: ExerciseCategory) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            Modifier
+                .width(8.dp)
+                .height(32.dp)
+                .background(category.markColor(), androidx.compose.foundation.shape.RoundedCornerShape(4.dp)),
         )
-        val dayText = deleteDays.joinToString(", ") { day -> dayNames.getOrElse(day - 1) { day.toString() } }
-        AlertDialog(
-            onDismissRequest = vm::dismissDelete,
-            title = { Text(stringResource(R.string.delete_workout_title)) },
-            text = {
-                Text(
-                    if (deleteDays.isEmpty()) stringResource(R.string.delete_workout_body, name)
-                    else stringResource(R.string.delete_workout_plan_body, name, dayText),
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { vm.confirmDelete(onBack) }) { Text(stringResource(R.string.delete)) }
-            },
-            dismissButton = {
-                TextButton(onClick = vm::dismissDelete) { Text(stringResource(R.string.cancel)) }
-            },
-        )
+        Text(categoryLabel(category), style = MaterialTheme.typography.headlineMedium)
     }
 }
 
 @Composable
 private fun SlotCard(
     slot: SlotUi,
-    index: Int,
+    expanded: Boolean,
     dragHandle: Modifier,
+    onToggle: () -> Unit,
     onRemove: () -> Unit,
-    onReorderAlternatives: (List<Long>) -> Unit,
     onAddAlternative: () -> Unit,
     onRemoveAlternative: (Long) -> Unit,
     onRest: (Long, Int?) -> Unit,
     onAddSet: (AlternativeUi) -> Unit,
     onEditSet: (AlternativeUi, SetUi) -> Unit,
 ) {
-    var alternatives by remember(slot.alternatives) { mutableStateOf(slot.alternatives) }
-    val lazyListState = rememberLazyListState()
-    val reorderState = rememberReorderableLazyListState(lazyListState) { from, to ->
-        alternatives = alternatives.toMutableList().apply {
-            if (from.index in indices && to.index in indices) {
-                add(to.index, removeAt(from.index))
-            }
-        }
-        onReorderAlternatives(alternatives.map { it.id })
-    }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.DragHandle, contentDescription = stringResource(R.string.drag_handle), modifier = dragHandle)
-                Text(stringResource(R.string.slot_label, index), modifier = Modifier.weight(1f))
+                IconButton(onClick = onToggle, modifier = dragHandle) {
+                    Icon(
+                        Icons.Filled.DragHandle,
+                        contentDescription = stringResource(R.string.expand_slot),
+                    )
+                }
+                Text(slot.title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                 IconButton(onClick = onRemove) {
                     Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.remove_slot))
                 }
             }
-            val lines = alternatives.sumOf { 4 + it.sets.size }.coerceAtLeast(1)
-            LazyColumn(
-                state = lazyListState,
-                modifier = Modifier.height(lines.times(64).dp),
-            ) {
-                items(alternatives, key = { it.id }) { alternative ->
-                    ReorderableItem(reorderState, key = alternative.id) { _ ->
-                        AlternativeBlock(
-                            alternative = alternative,
-                            dragHandle = Modifier.draggableHandle(),
-                            onRemove = { onRemoveAlternative(alternative.id) },
-                            onRest = { seconds -> onRest(alternative.id, seconds) },
-                            onAddSet = { onAddSet(alternative) },
-                            onEditSet = { set -> onEditSet(alternative, set) },
-                        )
-                    }
+            if (expanded) {
+                slot.alternatives.forEach { alternative ->
+                    AlternativeBlock(
+                        alternative = alternative,
+                        onRemove = { onRemoveAlternative(alternative.id) },
+                        onRest = { seconds -> onRest(alternative.id, seconds) },
+                        onAddSet = { onAddSet(alternative) },
+                        onEditSet = { set -> onEditSet(alternative, set) },
+                    )
                 }
+                TextButton(onClick = onAddAlternative) { Text(stringResource(R.string.add_alternative)) }
             }
-            TextButton(onClick = onAddAlternative) { Text(stringResource(R.string.add_alternative)) }
         }
     }
 }
@@ -590,7 +552,6 @@ private fun SlotCard(
 @Composable
 private fun AlternativeBlock(
     alternative: AlternativeUi,
-    dragHandle: Modifier,
     onRemove: () -> Unit,
     onRest: (Int?) -> Unit,
     onAddSet: () -> Unit,
@@ -602,7 +563,6 @@ private fun AlternativeBlock(
     }
     Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.DragHandle, contentDescription = stringResource(R.string.drag_handle), modifier = dragHandle)
             Column(Modifier.weight(1f)) {
                 Text(alternative.exerciseName, style = MaterialTheme.typography.titleMedium)
                 Text(exerciseTypeLabel(alternative.type), style = MaterialTheme.typography.bodySmall)

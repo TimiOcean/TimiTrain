@@ -2,7 +2,9 @@ package de.timitrain.data
 
 import android.app.Application
 import de.timitrain.data.db.TimiTrainDatabase
+import de.timitrain.domain.ExerciseCategory
 import de.timitrain.domain.ExerciseType
+import de.timitrain.domain.toExerciseCategory
 import de.timitrain.domain.Increments
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -72,6 +74,15 @@ class StarterPlanDatabaseTest {
         val birdDogMobility = mobility.slots.flatMap { it.alternatives }
             .single { it.exercise.name == "Bird Dog (Mobility)" }
         assertEquals(120, birdDogMobility.sets.single().durationSec)
+
+        val byName = db.exercises().listAll().associateBy { it.name }
+        assertEquals(ExerciseCategory.CARDIO, byName.getValue(StarterPlan.CARDIO).category.toExerciseCategory())
+        assertEquals(ExerciseCategory.MOBILITY, byName.getValue("Bird Dog (Mobility)").category.toExerciseCategory())
+        assertEquals(ExerciseCategory.MOBILITY, byName.getValue("Cat-Cow").category.toExerciseCategory())
+        assertEquals(ExerciseCategory.STRENGTH, byName.getValue("Seitstütz").category.toExerciseCategory())
+        assertEquals(ExerciseCategory.STRENGTH, byName.getValue("Bird Dog pro Seite").category.toExerciseCategory())
+        assertEquals(ExerciseCategory.STRENGTH, byName.getValue("Kurzhantel-Schrägbankdrücken").category.toExerciseCategory())
+        assertTrue(byName.values.all { it.category.toExerciseCategory() in ExerciseCategory.entries })
 
         val exercises = db.exercises().listAll().size
         val workoutCount = db.workouts().listAll().size

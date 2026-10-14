@@ -2,6 +2,7 @@ package de.timitrain.data.backup
 
 import de.timitrain.domain.ExerciseType
 import de.timitrain.domain.cardioHasMetric
+import de.timitrain.domain.toExerciseCategoryOrNull
 import de.timitrain.domain.toExerciseType
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -25,6 +26,7 @@ data class BackupExercise(
     val id: Long,
     val name: String,
     val type: String,
+    val category: String? = null,
     val repsIncrement: Int? = null,
     val weightIncrementKg: Double? = null,
     val durationIncrementSec: Int? = null,
@@ -258,6 +260,7 @@ object BackupCodec {
         } catch (_: IllegalArgumentException) {
             return false
         }
+        if (exercise.category != null && exercise.category.toExerciseCategoryOrNull() == null) return false
         return when (type) {
             ExerciseType.STRENGTH -> positive(exercise.weightIncrementKg)
             ExerciseType.BODYWEIGHT -> true

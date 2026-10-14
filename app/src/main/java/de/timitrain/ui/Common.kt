@@ -7,6 +7,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import de.timitrain.R
 import de.timitrain.TimiTrainApp
+import androidx.compose.ui.graphics.Color
+import de.timitrain.domain.ExerciseCategory
 import de.timitrain.domain.ExerciseType
 import de.timitrain.domain.InputProblem
 
@@ -19,6 +21,21 @@ fun <T : ViewModel> viewModelFactory(create: () -> T): ViewModelProvider.Factory
     return object : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <VM : ViewModel> create(modelClass: Class<VM>): VM = create() as VM
+    }
+}
+
+fun ExerciseCategory.markColor(): Color = when (this) {
+    ExerciseCategory.CARDIO -> Color(0xFFC4A035)
+    ExerciseCategory.STRENGTH -> Color(0xFF3E6FB5)
+    ExerciseCategory.MOBILITY -> Color(0xFF3E8B62)
+}
+
+@Composable
+fun categoryLabel(category: ExerciseCategory): String {
+    return when (category) {
+        ExerciseCategory.CARDIO -> stringResource(R.string.category_cardio)
+        ExerciseCategory.STRENGTH -> stringResource(R.string.category_strength)
+        ExerciseCategory.MOBILITY -> stringResource(R.string.category_mobility)
     }
 }
 

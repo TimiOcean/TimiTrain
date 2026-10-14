@@ -1,5 +1,6 @@
 package de.timitrain.data
 
+import de.timitrain.domain.ExerciseCategory
 import de.timitrain.domain.ExerciseType
 import de.timitrain.domain.SetValues
 
@@ -169,6 +170,34 @@ object StarterPlan {
             ),
         ),
     )
+
+    val mobilityExerciseNames: Set<String> = setOf(
+        "Cat-Cow",
+        "Thread the Needle",
+        "Open Books",
+        "Wall Angels",
+        "Schulterkreisen mit Band",
+        "Deep Squat Hold",
+        "90/90-Hip-Switch",
+        "World's Greatest Stretch",
+        "Glute Bridge",
+        "Leg Swings",
+        "Child's Pose",
+        "Quadruped Rocking",
+        "Foam-Roller-Extension",
+        "Hüftbeuger-Dehnung",
+        "Bird Dog (Mobility)",
+    )
+
+    /**
+     * Zone-2-Cardio is Cardio. The mobility routine, including Bird Dog (Mobility),
+     * is Mobility. Strength, bodyweight, and Seitstütz are Kraft.
+     */
+    fun categoryFor(name: String, type: ExerciseType): ExerciseCategory = when {
+        type == ExerciseType.CARDIO -> ExerciseCategory.CARDIO
+        name in mobilityExerciseNames -> ExerciseCategory.MOBILITY
+        else -> ExerciseCategory.STRENGTH
+    }
 
     /** Weekday 1 is Monday. Saturday and Sunday stay rest days. */
     val week: Map<Int, String?> = mapOf(

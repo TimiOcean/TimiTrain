@@ -43,6 +43,8 @@ import de.timitrain.domain.SessionRewind
 import de.timitrain.domain.SessionTouch
 import de.timitrain.domain.SetValues
 import de.timitrain.domain.stored
+import de.timitrain.domain.toExerciseCategoryOrNull
+import de.timitrain.domain.toExerciseType
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.time.LocalDate
@@ -61,11 +63,13 @@ class TimiTrainRepository(
         type: ExerciseType,
         increments: Increments,
         defaultSets: List<SetValues>,
+        category: de.timitrain.domain.ExerciseCategory = de.timitrain.domain.ExerciseCategory.STRENGTH,
     ): Long = db.withTransaction {
         val id = db.exercises().insert(
             ExerciseEntity(
                 name = name.trim(),
                 type = type.stored(),
+                category = category.stored(),
                 weightIncrementKg = increments.weightKg,
                 durationIncrementSec = increments.durationSec,
                 distanceIncrementKm = increments.distanceKm,
@@ -80,10 +84,16 @@ class TimiTrainRepository(
         return db.exercises().listDefaults(exerciseId).map { it.toValues() }
     }
 
-    suspend fun updateExercise(id: Long, increments: Increments, defaultSets: List<SetValues>) = db.withTransaction {
+    suspend fun updateExercise(
+        id: Long,
+        increments: Increments,
+        defaultSets: List<SetValues>,
+        category: de.timitrain.domain.ExerciseCategory,
+    ) = db.withTransaction {
         val existing = db.exercises().get(id) ?: return@withTransaction
         db.exercises().update(
             existing.copy(
+                category = category.stored(),
                 repsIncrement = null,
                 weightIncrementKg = increments.weightKg,
                 durationIncrementSec = increments.durationSec,
@@ -203,6 +213,10 @@ class TimiTrainRepository(
         orderedIds.forEachIndexed { index, id -> db.slots().updatePosition(id, index) }
     }
 
+    suspend fun reorderSlotPositions(positions: Map<Long, Int>) = db.withTransaction {
+        positions.forEach { (id, position) -> db.slots().updatePosition(id, position) }
+    }
+
     suspend fun reorderAlternatives(slotId: Long, orderedIds: List<Long>) = db.withTransaction {
         orderedIds.forEachIndexed { index, id -> db.alternatives().updatePosition(id, index) }
         val slot = db.slots().get(slotId) ?: return@withTransaction
@@ -261,6 +275,7 @@ class TimiTrainRepository(
                 exercise.type,
                 defaultIncrements(exercise.type),
                 exercise.sets,
+                StarterPlan.categoryFor(exercise.name, exercise.type),
             )
             val previous = exerciseIds.put(exercise.name, id)
             check(previous == null) { exercise.name }
@@ -574,6 +589,7 @@ private fun ExerciseEntity.toBackup(defaults: List<ExerciseDefaultSetEntity>): B
         id = id,
         name = name,
         type = type,
+        category = category,
         repsIncrement = repsIncrement,
         weightIncrementKg = weightIncrementKg,
         durationIncrementSec = durationIncrementSec,
@@ -623,10 +639,13 @@ private fun BackupDefaultSet.toEntity(exerciseId: Long): ExerciseDefaultSetEntit
 }
 
 private fun BackupExercise.toEntity(): ExerciseEntity {
+    val typeEnum = type.toExerciseType()
+    val resolved = category?.toExerciseCategoryOrNull() ?: StarterPlan.categoryFor(name, typeEnum)
     return ExerciseEntity(
         id = id,
         name = name,
         type = type,
+        category = resolved.stored(),
         repsIncrement = repsIncrement,
         weightIncrementKg = weightIncrementKg,
         durationIncrementSec = durationIncrementSec,

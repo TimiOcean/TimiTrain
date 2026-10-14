@@ -52,16 +52,19 @@ import de.timitrain.R
 import de.timitrain.data.db.ExerciseEntity
 import de.timitrain.data.db.WeekDayRow
 import de.timitrain.data.db.WorkoutEntity
+import de.timitrain.domain.ExerciseCategory
 import de.timitrain.domain.ExerciseType
 import de.timitrain.domain.GermanNumbers
 import de.timitrain.domain.Increments
 import de.timitrain.domain.InputProblem
 import de.timitrain.domain.SetValues
 import de.timitrain.domain.defaultIncrements
+import de.timitrain.domain.toExerciseCategory
 import de.timitrain.domain.toExerciseType
 import de.timitrain.domain.validateIncrements
 import de.timitrain.domain.validatePlanned
 import de.timitrain.ui.Routes
+import de.timitrain.ui.categoryLabel
 import de.timitrain.ui.exerciseTypeLabel
 import de.timitrain.ui.problemText
 import de.timitrain.ui.rememberApp
@@ -423,6 +426,7 @@ fun ExerciseCreateRoute(onBack: () -> Unit, onCreated: (Long) -> Unit) {
     )
     val error by vm.error.collectAsState()
     var name by remember { mutableStateOf("") }
+    var category by remember { mutableStateOf(ExerciseCategory.STRENGTH) }
     var type by remember { mutableStateOf(ExerciseType.STRENGTH) }
     var increments by remember { mutableStateOf(defaultIncrements(ExerciseType.STRENGTH)) }
     var sets by remember { mutableStateOf(listOf<SetValues>()) }
@@ -450,6 +454,16 @@ fun ExerciseCreateRoute(onBack: () -> Unit, onCreated: (Long) -> Unit) {
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+            Text(stringResource(R.string.category_label))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ExerciseCategory.entries.forEach { candidate ->
+                    FilterChip(
+                        selected = category == candidate,
+                        onClick = { category = candidate },
+                        label = { Text(categoryLabel(candidate)) },
+                    )
+                }
+            }
             Text(stringResource(R.string.exercise_type))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ExerciseType.entries.forEach { candidate ->
@@ -474,7 +488,7 @@ fun ExerciseCreateRoute(onBack: () -> Unit, onCreated: (Long) -> Unit) {
             )
             error?.let { Text(problemText(it), color = MaterialTheme.colorScheme.error) }
             OutlinedButton(
-                onClick = { vm.save(name, type, increments, sets, onCreated) },
+                onClick = { vm.save(name, category, type, increments, sets, onCreated) },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(stringResource(R.string.save)) }
         }
@@ -519,6 +533,7 @@ class ExerciseCreateViewModel(
 
     fun save(
         name: String,
+        category: ExerciseCategory,
         type: ExerciseType,
         increments: Increments,
         defaultSets: List<SetValues>,
@@ -534,13 +549,13 @@ class ExerciseCreateViewModel(
             return
         }
         viewModelScope.launch {
-            val id = repository.createExercise(name, type, increments, defaultSets)
+            val id = repository.createExercise(name, type, increments, defaultSets, category)
             onDone(id)
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ExerciseEditRoute(exerciseId: Long?, onBack: () -> Unit) {
     val app = rememberApp()
@@ -555,6 +570,7 @@ fun ExerciseEditRoute(exerciseId: Long?, onBack: () -> Unit) {
     val form by vm.form.collectAsState()
     val error by vm.error.collectAsState()
     val current = form
+    var category by remember { mutableStateOf(ExerciseCategory.STRENGTH) }
     var increments by remember { mutableStateOf(Increments()) }
     var sets by remember { mutableStateOf(listOf<SetValues>()) }
     var ready by remember { mutableStateOf(false) }
@@ -562,6 +578,7 @@ fun ExerciseEditRoute(exerciseId: Long?, onBack: () -> Unit) {
     LaunchedEffect(current) {
         val loaded = current ?: return@LaunchedEffect
         if (!ready) {
+            category = loaded.category
             increments = loaded.increments
             sets = loaded.sets
             ready = true
@@ -590,6 +607,16 @@ fun ExerciseEditRoute(exerciseId: Long?, onBack: () -> Unit) {
                 Text(current.name, style = MaterialTheme.typography.headlineSmall)
                 Text(exerciseTypeLabel(type))
                 Text(stringResource(R.string.increments_fixed_name))
+                Text(stringResource(R.string.category_label))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ExerciseCategory.entries.forEach { candidate ->
+                        FilterChip(
+                            selected = category == candidate,
+                            onClick = { category = candidate },
+                            label = { Text(categoryLabel(candidate)) },
+                        )
+                    }
+                }
                 IncrementFields(type = type, increments = increments, onChange = { increments = it })
                 DefaultSetList(
                     type = type,
@@ -599,7 +626,7 @@ fun ExerciseEditRoute(exerciseId: Long?, onBack: () -> Unit) {
                 )
                 error?.let { Text(problemText(it), color = MaterialTheme.colorScheme.error) }
                 OutlinedButton(
-                    onClick = { vm.save(type, increments, sets, onBack) },
+                    onClick = { vm.save(type, category, increments, sets, onBack) },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(stringResource(R.string.save)) }
             }
@@ -643,6 +670,7 @@ fun ExerciseEditRoute(exerciseId: Long?, onBack: () -> Unit) {
 data class ExerciseForm(
     val name: String,
     val type: ExerciseType,
+    val category: ExerciseCategory,
     val increments: Increments,
     val sets: List<SetValues>,
 )
@@ -662,6 +690,7 @@ class ExerciseEditViewModel(
             _form.value = ExerciseForm(
                 name = exercise.name,
                 type = exercise.type.toExerciseType(),
+                category = exercise.category.toExerciseCategory(),
                 increments = Increments(
                     weightKg = exercise.weightIncrementKg,
                     durationSec = exercise.durationIncrementSec,
@@ -673,14 +702,20 @@ class ExerciseEditViewModel(
         }
     }
 
-    fun save(type: ExerciseType, increments: Increments, defaultSets: List<SetValues>, onDone: () -> Unit) {
+    fun save(
+        type: ExerciseType,
+        category: ExerciseCategory,
+        increments: Increments,
+        defaultSets: List<SetValues>,
+        onDone: () -> Unit,
+    ) {
         val problem = validateIncrements(type, increments)
         if (problem != null) {
             _error.value = problem
             return
         }
         viewModelScope.launch {
-            repository.updateExercise(exerciseId, increments, defaultSets)
+            repository.updateExercise(exerciseId, increments, defaultSets, category)
             onDone()
         }
     }
