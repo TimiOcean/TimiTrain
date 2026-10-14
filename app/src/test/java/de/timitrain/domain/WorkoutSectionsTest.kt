@@ -20,6 +20,20 @@ class WorkoutSectionsTest {
     }
 
     @Test
+    fun canonicalOrderIsTheTrainingOrder() {
+        val slots = listOf(
+            CategorizedSlot(1, 0, ExerciseCategory.MOBILITY),
+            CategorizedSlot(2, 1, ExerciseCategory.STRENGTH),
+            CategorizedSlot(3, 2, ExerciseCategory.CARDIO),
+            CategorizedSlot(4, 3, ExerciseCategory.STRENGTH),
+        )
+        assertEquals(
+            mapOf(3L to 0, 2L to 1, 4L to 2, 1L to 3),
+            WorkoutSections.canonicalPositions(slots),
+        )
+    }
+
+    @Test
     fun reorderStaysInsideTheSection() {
         val slots = listOf(
             CategorizedSlot(1, 0, ExerciseCategory.MOBILITY),

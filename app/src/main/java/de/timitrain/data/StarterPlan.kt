@@ -38,6 +38,24 @@ object StarterPlan {
     const val DEFAULT_CARDIO_MINUTES = 10
     const val FRIDAY_CARDIO_MINUTES = 20
 
+    val mobilityExerciseNames: Set<String> = setOf(
+        "Cat-Cow",
+        "Thread the Needle",
+        "Open Books",
+        "Wall Angels",
+        "Schulterkreisen mit Band",
+        "Deep Squat Hold",
+        "90/90-Hip-Switch",
+        "World's Greatest Stretch",
+        "Glute Bridge",
+        "Leg Swings",
+        "Child's Pose",
+        "Quadruped Rocking",
+        "Foam-Roller-Extension",
+        "Hüftbeuger-Dehnung",
+        "Bird Dog (Mobility)",
+    )
+
     private val routineA = listOf(
         "Cat-Cow",
         "Thread the Needle",
@@ -107,87 +125,90 @@ object StarterPlan {
     val workouts: List<StarterWorkout> = listOf(
         StarterWorkout(
             PUSH,
-            routineA + listOf(
-                slot("Kurzhantel-Schrägbankdrücken"),
-                slot("Schulterdrücken (Kurzhantel)"),
-                slot("Seitheben"),
-                slot("Trizepsdrücken am Kabel"),
-                slot("Face Pulls"),
-                cardio(DEFAULT_CARDIO_MINUTES),
+            inTrainingOrder(
+                routineA + listOf(
+                    slot("Kurzhantel-Schrägbankdrücken"),
+                    slot("Schulterdrücken (Kurzhantel)"),
+                    slot("Seitheben"),
+                    slot("Trizepsdrücken am Kabel"),
+                    slot("Face Pulls"),
+                    cardio(DEFAULT_CARDIO_MINUTES),
+                ),
             ),
         ),
         StarterWorkout(
             PULL,
-            routineA + listOf(
-                slot("Latzug"),
-                slot("Rudern brustgestützt", "Kabelrudern"),
-                slot("Reverse Fly"),
-                slot("Bizeps-Curls"),
-                slot("Rückenstrecker"),
-                cardio(DEFAULT_CARDIO_MINUTES),
+            inTrainingOrder(
+                routineA + listOf(
+                    slot("Latzug"),
+                    slot("Rudern brustgestützt", "Kabelrudern"),
+                    slot("Reverse Fly"),
+                    slot("Bizeps-Curls"),
+                    slot("Rückenstrecker"),
+                    cardio(DEFAULT_CARDIO_MINUTES),
+                ),
             ),
         ),
         StarterWorkout(
             LEGS,
-            routineB + listOf(
-                slot("Goblet-Kniebeuge", "Beinpresse"),
-                slot("Rumänisches Kreuzheben"),
-                slot("Ausfallschritte pro Seite"),
-                slot("Wadenheben"),
-                cardio(DEFAULT_CARDIO_MINUTES),
+            inTrainingOrder(
+                routineB + listOf(
+                    slot("Goblet-Kniebeuge", "Beinpresse"),
+                    slot("Rumänisches Kreuzheben"),
+                    slot("Ausfallschritte pro Seite"),
+                    slot("Wadenheben"),
+                    cardio(DEFAULT_CARDIO_MINUTES),
+                ),
             ),
         ),
         StarterWorkout(
             UPPER,
-            routineA + listOf(
-                slot("Brustpresse"),
-                slot("Einarmiges Rudern"),
-                slot("Arnold Press", "Schulterdrücken an der Maschine"),
-                slot("Pallof Press pro Seite"),
-                slot("Dead Bug pro Seite"),
-                cardio(DEFAULT_CARDIO_MINUTES),
+            inTrainingOrder(
+                routineA + listOf(
+                    slot("Brustpresse"),
+                    slot("Einarmiges Rudern"),
+                    slot("Arnold Press", "Schulterdrücken an der Maschine"),
+                    slot("Pallof Press pro Seite"),
+                    slot("Dead Bug pro Seite"),
+                    cardio(DEFAULT_CARDIO_MINUTES),
+                ),
             ),
         ),
         StarterWorkout(
             LOWER,
-            routineB + listOf(
-                slot("Hip Thrust"),
-                slot("Beinbeuger"),
-                slot("Beinstrecker"),
-                slot("Bird Dog pro Seite"),
-                slot("Seitstütz"),
-                cardio(FRIDAY_CARDIO_MINUTES),
+            inTrainingOrder(
+                routineB + listOf(
+                    slot("Hip Thrust"),
+                    slot("Beinbeuger"),
+                    slot("Beinstrecker"),
+                    slot("Bird Dog pro Seite"),
+                    slot("Seitstütz"),
+                    cardio(FRIDAY_CARDIO_MINUTES),
+                ),
             ),
         ),
         StarterWorkout(
             MOBILITY_C,
-            listOf(
-                slot("Child's Pose"),
-                slot("Quadruped Rocking"),
-                slot("Foam-Roller-Extension"),
-                slot("Hüftbeuger-Dehnung"),
-                slot("Bird Dog (Mobility)"),
+            inTrainingOrder(
+                listOf(
+                    slot("Child's Pose"),
+                    slot("Quadruped Rocking"),
+                    slot("Foam-Roller-Extension"),
+                    slot("Hüftbeuger-Dehnung"),
+                    slot("Bird Dog (Mobility)"),
+                ),
             ),
         ),
     )
 
-    val mobilityExerciseNames: Set<String> = setOf(
-        "Cat-Cow",
-        "Thread the Needle",
-        "Open Books",
-        "Wall Angels",
-        "Schulterkreisen mit Band",
-        "Deep Squat Hold",
-        "90/90-Hip-Switch",
-        "World's Greatest Stretch",
-        "Glute Bridge",
-        "Leg Swings",
-        "Child's Pose",
-        "Quadruped Rocking",
-        "Foam-Roller-Extension",
-        "Hüftbeuger-Dehnung",
-        "Bird Dog (Mobility)",
-    )
+    /** Cardio, then Kraft, then Mobility. Equal categories keep their current order. */
+    private fun inTrainingOrder(slots: List<StarterSlot>): List<StarterSlot> {
+        return slots.sortedBy { slot ->
+            val name = slot.alternatives.first()
+            val type = exercises.first { it.name == name }.type
+            categoryFor(name, type).ordinal
+        }
+    }
 
     /**
      * Zone-2-Cardio is Cardio. The mobility routine, including Bird Dog (Mobility),

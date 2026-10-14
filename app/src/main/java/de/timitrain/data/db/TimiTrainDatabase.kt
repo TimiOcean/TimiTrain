@@ -5,8 +5,13 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
+import androidx.sqlite.db.SimpleSQLiteQuery
 import androidx.sqlite.db.SupportSQLiteDatabase
+import de.timitrain.domain.CategorizedSlot
+import de.timitrain.domain.ExerciseCategory
 import de.timitrain.domain.InitialNumbers
+import de.timitrain.domain.WorkoutSections
+import de.timitrain.domain.toExerciseCategoryOrNull
 
 @Database(
     entities = [
@@ -23,7 +28,7 @@ import de.timitrain.domain.InitialNumbers
         SessionRotationSnapshotEntity::class,
         SettingsEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 abstract class TimiTrainDatabase : RoomDatabase() {
@@ -42,7 +47,7 @@ abstract class TimiTrainDatabase : RoomDatabase() {
                 context.applicationContext,
                 TimiTrainDatabase::class.java,
                 "timitrain.db",
-            ).addCallback(SeedCallback).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
+            ).addCallback(SeedCallback).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build()
         }
 
         internal fun createInMemory(context: Context): TimiTrainDatabase {
@@ -106,6 +111,46 @@ private val MIGRATION_3_4 = object : Migration(3, 4) {
             "Bird Dog (Mobility)",
         ).joinToString(",") { "'$it'" }
         db.execSQL("UPDATE exercises SET category = 'MOBILITY' WHERE name IN ($mobility)")
+    }
+}
+
+/**
+ * Rewrites slot positions to Cardio, then Kraft, then Mobility. Inside a
+ * section the previous position stays the relative order.
+ */
+private val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        val workoutIds = mutableListOf<Long>()
+        db.query("SELECT id FROM workouts").use { cursor ->
+            while (cursor.moveToNext()) workoutIds += cursor.getLong(0)
+        }
+        for (workoutId in workoutIds) {
+            val slots = mutableListOf<CategorizedSlot>()
+            db.query(
+                SimpleSQLiteQuery(
+                    """
+                    SELECT s.id, s.position,
+                      COALESCE(
+                        (SELECT e.category FROM slot_alternatives a
+                         JOIN exercises e ON e.id = a.exerciseId
+                         WHERE a.slotId = s.id
+                         ORDER BY a.position, a.id LIMIT 1),
+                        'STRENGTH')
+                    FROM workout_slots s
+                    WHERE s.workoutId = ?
+                    """.trimIndent(),
+                    arrayOf(workoutId),
+                ),
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val category = cursor.getString(2).toExerciseCategoryOrNull() ?: ExerciseCategory.STRENGTH
+                    slots += CategorizedSlot(cursor.getLong(0), cursor.getInt(1), category)
+                }
+            }
+            WorkoutSections.canonicalPositions(slots).forEach { (id, position) ->
+                db.execSQL("UPDATE workout_slots SET position = ? WHERE id = ?", arrayOf(position, id))
+            }
+        }
     }
 }
 

@@ -30,8 +30,11 @@ import de.timitrain.data.db.WeekDayRow
 import de.timitrain.data.db.WorkoutEntity
 import de.timitrain.data.db.WorkoutGraph
 import de.timitrain.data.db.WorkoutSlotEntity
+import de.timitrain.domain.CategorizedSlot
 import de.timitrain.domain.DefaultSets
+import de.timitrain.domain.ExerciseCategory
 import de.timitrain.domain.ExerciseType
+import de.timitrain.domain.WorkoutSections
 import de.timitrain.domain.defaultIncrements
 import de.timitrain.domain.Increments
 import de.timitrain.domain.InitialNumbers
@@ -103,6 +106,19 @@ class TimiTrainRepository(
         )
         db.exercises().deleteDefaults(id)
         insertDefaultSets(id, defaultSets)
+        if (existing.category != category.stored()) {
+            for (graph in db.workouts().loadAllGraphs()) {
+                val moved = graph.slots.filter { slot ->
+                    slot.alternatives.minByOrNull { it.alternative.position }?.exercise?.id == id
+                }.sortedBy { it.slot.position }
+                if (moved.isEmpty()) continue
+                val base = (graph.slots.maxOfOrNull { it.slot.position } ?: -1) + 1
+                moved.forEachIndexed { index, slot ->
+                    db.slots().updatePosition(slot.slot.id, base + index)
+                }
+                persistCategoryOrder(graph.workout.id)
+            }
+        }
     }
 
     private suspend fun insertDefaultSets(exerciseId: Long, sets: List<SetValues>) {
@@ -174,6 +190,7 @@ class TimiTrainRepository(
             SlotAlternativeEntity(slotId = slotId, exerciseId = exerciseId, position = 0),
         )
         copyDefaultsOnto(exerciseId, alternativeId)
+        persistCategoryOrder(workoutId)
     }
 
     suspend fun addAlternative(slotId: Long, exerciseId: Long) = db.withTransaction {
@@ -190,23 +207,35 @@ class TimiTrainRepository(
     suspend fun removeAlternative(alternativeId: Long) = db.withTransaction {
         val alternative = db.alternatives().get(alternativeId) ?: return@withTransaction
         val slot = db.slots().get(alternative.slotId) ?: return@withTransaction
+        val before = db.alternatives().listForSlot(alternative.slotId)
+        val wasPrimary = before.minByOrNull { it.position }?.id == alternativeId
+        val oldCategory = db.exercises().get(alternative.exerciseId)?.category
         db.alternatives().delete(alternativeId)
         val remaining = db.alternatives().listForSlot(alternative.slotId)
         if (remaining.isEmpty()) {
             db.slots().delete(slot.id)
-            resequenceSlots(slot.workoutId)
+            persistCategoryOrder(slot.workoutId)
         } else {
             remaining.forEachIndexed { index, item ->
                 db.alternatives().updatePosition(item.id, index)
             }
             db.slots().updateRotation(slot.id, Rotation.normalize(slot.rotationIndex, remaining.size))
+            if (wasPrimary) {
+                val newPrimary = remaining.minBy { it.position }
+                val newCategory = db.exercises().get(newPrimary.exerciseId)?.category
+                if (newCategory != oldCategory) {
+                    val maxPosition = db.slots().listForWorkout(slot.workoutId).maxOf { it.position }
+                    db.slots().updatePosition(slot.id, maxPosition + 1)
+                }
+            }
+            persistCategoryOrder(slot.workoutId)
         }
     }
 
     suspend fun removeSlot(slotId: Long) = db.withTransaction {
         val slot = db.slots().get(slotId) ?: return@withTransaction
         db.slots().delete(slotId)
-        resequenceSlots(slot.workoutId)
+        persistCategoryOrder(slot.workoutId)
     }
 
     suspend fun reorderSlots(workoutId: Long, orderedIds: List<Long>) = db.withTransaction {
@@ -214,7 +243,10 @@ class TimiTrainRepository(
     }
 
     suspend fun reorderSlotPositions(positions: Map<Long, Int>) = db.withTransaction {
+        if (positions.isEmpty()) return@withTransaction
         positions.forEach { (id, position) -> db.slots().updatePosition(id, position) }
+        val workoutId = db.slots().get(positions.keys.first())?.workoutId ?: return@withTransaction
+        persistCategoryOrder(workoutId)
     }
 
     suspend fun reorderAlternatives(slotId: Long, orderedIds: List<Long>) = db.withTransaction {
@@ -494,6 +526,7 @@ class TimiTrainRepository(
                     }
                 }
             }
+            persistCategoryOrder(workout.id)
         }
         for (day in document.weekPlan) {
             db.weekPlan().setWorkout(day.weekday, day.workoutId)
@@ -512,9 +545,21 @@ class TimiTrainRepository(
         }
     }
 
-    private suspend fun resequenceSlots(workoutId: Long) {
-        val slots = db.slots().listForWorkout(workoutId)
-        slots.forEachIndexed { index, slot -> db.slots().updatePosition(slot.id, index) }
+    /**
+     * Writes positions 0..n-1 in section order. A slot whose position was set
+     * above the others sorts last inside its section, which is how a new
+     * exercise and a moved Bereich land at the end of that section.
+     */
+    private suspend fun persistCategoryOrder(workoutId: Long) {
+        val graph = db.workouts().loadGraph(workoutId) ?: return
+        val categorized = graph.slots.map { slot ->
+            val primary = slot.alternatives.minByOrNull { it.alternative.position }
+            val category = primary?.exercise?.category?.toExerciseCategoryOrNull() ?: ExerciseCategory.STRENGTH
+            CategorizedSlot(slot.slot.id, slot.slot.position, category)
+        }
+        WorkoutSections.canonicalPositions(categorized).forEach { (id, position) ->
+            db.slots().updatePosition(id, position)
+        }
     }
 }
 

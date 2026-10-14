@@ -52,15 +52,20 @@ data class CategorizedSlot(
 )
 
 /**
- * Plan mode shows Cardio, then Kraft, then Mobility. Inside a section the
+ * Stored slot order is Cardio, then Kraft, then Mobility. Inside a section the
  * previous positions decide the order. Reordering a section only reassigns
- * the positions that section already held.
+ * the positions that section already held. [canonicalPositions] then packs
+ * those positions so training walks the same order.
  */
 object WorkoutSections {
     fun grouped(slots: List<CategorizedSlot>): List<List<CategorizedSlot>> {
         return ExerciseCategory.entries.map { category ->
             slots.filter { it.category == category }.sortedBy { it.position }
         }
+    }
+
+    fun canonicalPositions(slots: List<CategorizedSlot>): Map<Long, Int> {
+        return grouped(slots).flatten().mapIndexed { index, slot -> slot.id to index }.toMap()
     }
 
     fun positionsAfterReorder(
