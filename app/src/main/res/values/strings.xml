@@ -76,6 +76,8 @@
     <string name="edit">Bearbeiten</string>
     <string name="edit_set">Satz bearbeiten</string>
     <string name="set_of">Satz %1$d von %2$d</string>
+    <string name="set_name">Satz</string>
+    <string name="set_progress">%1$d von %2$d</string>
     <string name="plan_label">Plan</string>
     <string name="last_time">Letztes Mal: %1$s</string>
     <string name="minus">Weniger</string>

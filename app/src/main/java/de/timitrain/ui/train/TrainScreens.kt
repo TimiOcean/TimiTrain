@@ -2,6 +2,7 @@ package de.timitrain.ui.train
 
 import android.database.sqlite.SQLiteConstraintException
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
@@ -15,7 +16,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,10 +23,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -44,9 +48,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
@@ -597,15 +601,60 @@ class SessionViewModel(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SessionScreen(state: SessionUi, vm: SessionViewModel, onLeave: () -> Unit) {
+    val step = state.steps.getOrNull(state.index)
+    val sessionOpen = !state.loading && !state.blocked && !state.missing
+    var menuOpen by remember { mutableStateOf(false) }
+    val restEndsAt = state.restEndsAt
+    var restNow by remember(restEndsAt) { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(restEndsAt) {
+        if (restEndsAt == null) return@LaunchedEffect
+        while (System.currentTimeMillis() < restEndsAt) {
+            restNow = System.currentTimeMillis()
+            delay(200)
+        }
+        restNow = System.currentTimeMillis()
+    }
+    val resting = restEndsAt != null && restNow < restEndsAt
+    val restTint = if (isSystemInDarkTheme()) Color.White.copy(alpha = 0.14f) else Color.Black.copy(alpha = 0.14f)
+    Box(Modifier.fillMaxSize()) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(state.workoutName.ifBlank { stringResource(R.string.tab_train) }) },
+                title = {
+                    SessionTitle(
+                        workoutName = state.workoutName.ifBlank { stringResource(R.string.tab_train) },
+                        category = if (sessionOpen) step?.category else null,
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = {
                         if (state.completed.isEmpty()) onLeave() else vm.requestDiscard()
                     }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
+                    }
+                },
+                actions = {
+                    if (sessionOpen) {
+                        IconButton(onClick = { menuOpen = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more))
+                        }
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.discard)) },
+                                onClick = {
+                                    menuOpen = false
+                                    vm.requestDiscard()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.save_and_finish)) },
+                                enabled = state.completed.isNotEmpty(),
+                                onClick = {
+                                    menuOpen = false
+                                    vm.save()
+                                },
+                            )
+                        }
                     }
                 },
             )
@@ -631,7 +680,6 @@ private fun SessionScreen(state: SessionUi, vm: SessionViewModel, onLeave: () ->
                         verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
                     ) {
                         RestBanner(state.restEndsAt)
-                        val step = state.steps.getOrNull(state.index)
                         if (step == null) {
                             Text(
                                 if (state.steps.isEmpty()) stringResource(R.string.empty_session) else stringResource(R.string.session_done),
@@ -640,32 +688,14 @@ private fun SessionScreen(state: SessionUi, vm: SessionViewModel, onLeave: () ->
                             )
                         } else {
                             val actual = state.actuals[state.index]
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                Box(
-                                    Modifier
-                                        .width(8.dp)
-                                        .height(28.dp)
-                                        .background(step.category.markColor(), RoundedCornerShape(4.dp)),
-                                )
-                                Text(
-                                    categoryLabel(step.category),
-                                    color = step.category.markColor(),
-                                    style = trainingText(MaterialTheme.typography.titleMedium),
-                                    textAlign = TextAlign.Center,
-                                )
-                            }
                             Text(
                                 step.exerciseName,
                                 style = trainingText(MaterialTheme.typography.headlineSmall),
                                 textAlign = TextAlign.Center,
                             )
-                            Text(
-                                stringResource(R.string.set_of, step.setNumber, step.setCount),
-                                style = trainingText(MaterialTheme.typography.titleLarge),
-                                textAlign = TextAlign.Center,
+                            ParameterLine(
+                                stringResource(R.string.set_name),
+                                stringResource(R.string.set_progress, step.setNumber, step.setCount),
                             )
                             if (!state.adjusting) {
                                 PlannedParameters(step)
@@ -714,60 +744,49 @@ private fun SessionScreen(state: SessionUi, vm: SessionViewModel, onLeave: () ->
                                     )
                                 }
                             }
-                            Row(
-                                Modifier.fillMaxWidth(0.6f),
-                                horizontalArrangement = Arrangement.spacedBy(5.dp),
-                            ) {
-                                Button(
-                                    onClick = vm::completeAsPlanned,
-                                    modifier = Modifier.weight(1f).height(48.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = Color(0xFF2E7D32),
-                                        contentColor = Color.White,
-                                    ),
+                            if (state.adjusting) {
+                                CheckButton(
+                                    onClick = vm::confirmAdjusted,
+                                    description = stringResource(R.string.confirm_actual),
+                                    container = Color(0xFF2E7D32),
+                                    modifier = Modifier.fillMaxWidth(0.3f),
+                                )
+                            } else {
+                                Row(
+                                    Modifier.fillMaxWidth(0.6f),
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                                 ) {
-                                    Icon(
-                                        Icons.Filled.Check,
-                                        contentDescription = stringResource(R.string.done_as_planned),
-                                        modifier = Modifier.size(24.dp),
+                                    CheckButton(
+                                        onClick = vm::completeAsPlanned,
+                                        description = stringResource(R.string.done_as_planned),
+                                        container = Color(0xFF2E7D32),
+                                        modifier = Modifier.weight(1f),
                                     )
-                                }
-                                Button(
-                                    onClick = if (state.adjusting) vm::confirmAdjusted else vm::startAdjusting,
-                                    modifier = Modifier.weight(1f).height(48.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = Color(0xFF1565C0),
-                                        contentColor = Color.White,
-                                    ),
-                                ) {
-                                    Icon(
-                                        Icons.Filled.Check,
-                                        contentDescription = stringResource(
-                                            if (state.adjusting) R.string.confirm_actual else R.string.done_differently,
+                                    Button(
+                                        onClick = vm::startAdjusting,
+                                        modifier = Modifier.weight(1f).height(48.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Color(0xFF1565C0),
+                                            contentColor = Color.White,
                                         ),
-                                        modifier = Modifier.size(24.dp),
-                                    )
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Edit,
+                                            contentDescription = stringResource(R.string.done_differently),
+                                            modifier = Modifier.size(24.dp),
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
                 }
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedButton(
-                        onClick = vm::requestDiscard,
-                        modifier = Modifier.weight(1f).height(64.dp),
-                    ) { Text(stringResource(R.string.discard)) }
-                    FilledTonalButton(
-                        onClick = vm::save,
-                        enabled = state.completed.isNotEmpty(),
-                        modifier = Modifier.weight(1f).height(64.dp),
-                    ) { Text(stringResource(R.string.save_and_finish), textAlign = TextAlign.Center) }
-                }
             }
         }
+    }
+    if (resting) {
+        Box(Modifier.fillMaxSize().background(restTint))
+    }
     }
     if (state.askDiscard) {
         AlertDialog(
@@ -781,6 +800,35 @@ private fun SessionScreen(state: SessionUi, vm: SessionViewModel, onLeave: () ->
                 TextButton(onClick = vm::dismissDiscard) { Text(stringResource(R.string.cancel)) }
             },
         )
+    }
+}
+
+@Composable
+private fun SessionTitle(workoutName: String, category: ExerciseCategory?) {
+    if (category == null) {
+        Text(workoutName, maxLines = 1)
+        return
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(workoutName, maxLines = 1)
+        Text(" / ")
+        Text(categoryLabel(category), color = category.markColor(), maxLines = 1)
+    }
+}
+
+@Composable
+private fun CheckButton(
+    onClick: () -> Unit,
+    description: String,
+    container: Color,
+    modifier: Modifier = Modifier,
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier.height(48.dp),
+        colors = ButtonDefaults.buttonColors(containerColor = container, contentColor = Color.White),
+    ) {
+        Icon(Icons.Filled.Check, contentDescription = description, modifier = Modifier.size(24.dp))
     }
 }
 
