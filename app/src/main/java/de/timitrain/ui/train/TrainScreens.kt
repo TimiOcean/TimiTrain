@@ -9,9 +9,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
@@ -50,6 +52,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -616,120 +619,143 @@ private fun SessionScreen(state: SessionUi, vm: SessionViewModel, onLeave: () ->
                 style = MaterialTheme.typography.headlineMedium,
             )
             state.missing -> Text(stringResource(R.string.plan_empty), modifier = Modifier.padding(padding).padding(16.dp))
-            else -> Column(
-                Modifier
-                    .padding(padding)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                RestBanner(state.restEndsAt)
-                val step = state.steps.getOrNull(state.index)
-                if (step == null) {
-                    Text(
-                        if (state.steps.isEmpty()) stringResource(R.string.empty_session) else stringResource(R.string.session_done),
-                        style = MaterialTheme.typography.headlineSmall,
-                    )
-                } else {
-                    val actual = state.actuals[state.index]
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+            else -> Column(Modifier.padding(padding).fillMaxSize()) {
+                BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = maxHeight)
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
                     ) {
-                        Box(
-                            Modifier
-                                .width(8.dp)
-                                .height(28.dp)
-                                .background(step.category.markColor(), RoundedCornerShape(4.dp)),
-                        )
-                        Text(
-                            categoryLabel(step.category),
-                            color = step.category.markColor(),
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                    }
-                    Text(step.exerciseName, style = MaterialTheme.typography.headlineSmall)
-                    if (!state.adjusting) {
-                        PlannedParameters(step)
-                    }
-                    countdownSeconds(step.type, step.plan)?.let { seconds ->
-                        ExerciseCountdown(stepKey = state.index, totalSeconds = seconds)
-                    }
-                    if (state.adjusting) {
-                        when (step.type) {
-                            ExerciseType.STRENGTH, ExerciseType.BODYWEIGHT -> Stepper(
-                                label = stringResource(R.string.reps),
-                                value = (actual.reps ?: 0).toString(),
-                                onMinus = { vm.nudge(Metric.REPS, -1) },
-                                onPlus = { vm.nudge(Metric.REPS, 1) },
+                        RestBanner(state.restEndsAt)
+                        val step = state.steps.getOrNull(state.index)
+                        if (step == null) {
+                            Text(
+                                if (state.steps.isEmpty()) stringResource(R.string.empty_session) else stringResource(R.string.session_done),
+                                style = trainingText(MaterialTheme.typography.headlineSmall),
+                                textAlign = TextAlign.Center,
                             )
-                            else -> Unit
-                        }
-                        if (step.type == ExerciseType.STRENGTH) {
-                            Stepper(
-                                label = stringResource(R.string.weight_kg),
-                                value = GermanNumbers.format(actual.weightKg ?: 0.0),
-                                onMinus = { vm.nudge(Metric.WEIGHT, -1) },
-                                onPlus = { vm.nudge(Metric.WEIGHT, 1) },
+                        } else {
+                            val actual = state.actuals[state.index]
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Box(
+                                    Modifier
+                                        .width(8.dp)
+                                        .height(28.dp)
+                                        .background(step.category.markColor(), RoundedCornerShape(4.dp)),
+                                )
+                                Text(
+                                    categoryLabel(step.category),
+                                    color = step.category.markColor(),
+                                    style = trainingText(MaterialTheme.typography.titleMedium),
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
+                            Text(
+                                step.exerciseName,
+                                style = trainingText(MaterialTheme.typography.headlineSmall),
+                                textAlign = TextAlign.Center,
                             )
-                        }
-                        if (step.type == ExerciseType.TIMED) {
-                            Stepper(
-                                label = stringResource(R.string.duration_sec),
-                                value = (actual.durationSec ?: 0).toString(),
-                                onMinus = { vm.nudge(Metric.SECONDS, -1) },
-                                onPlus = { vm.nudge(Metric.SECONDS, 1) },
+                            Text(
+                                stringResource(R.string.set_of, step.setNumber, step.setCount),
+                                style = trainingText(MaterialTheme.typography.titleLarge),
+                                textAlign = TextAlign.Center,
                             )
-                        }
-                        if (step.type == ExerciseType.CARDIO) {
-                            Stepper(
-                                label = stringResource(R.string.distance_km),
-                                value = actual.distanceKm?.let(GermanNumbers::format) ?: "–",
-                                onMinus = { vm.nudge(Metric.DISTANCE, -1) },
-                                onPlus = { vm.nudge(Metric.DISTANCE, 1) },
-                            )
-                            Stepper(
-                                label = stringResource(R.string.duration_min),
-                                value = actual.durationMin?.toString() ?: "–",
-                                onMinus = { vm.nudge(Metric.MINUTES, -1) },
-                                onPlus = { vm.nudge(Metric.MINUTES, 1) },
-                            )
-                        }
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = vm::completeAsPlanned,
-                            modifier = Modifier.weight(1f).height(80.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF2E7D32),
-                                contentColor = Color.White,
-                            ),
-                        ) {
-                            Icon(
-                                Icons.Filled.Check,
-                                contentDescription = stringResource(R.string.done_as_planned),
-                                modifier = Modifier.size(40.dp),
-                            )
-                        }
-                        Button(
-                            onClick = if (state.adjusting) vm::confirmAdjusted else vm::startAdjusting,
-                            modifier = Modifier.weight(1f).height(80.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF1565C0),
-                                contentColor = Color.White,
-                            ),
-                        ) {
-                            Icon(
-                                Icons.Filled.Check,
-                                contentDescription = stringResource(
-                                    if (state.adjusting) R.string.confirm_actual else R.string.done_differently,
-                                ),
-                                modifier = Modifier.size(40.dp),
-                            )
+                            if (!state.adjusting) {
+                                PlannedParameters(step)
+                            }
+                            countdownSeconds(step.type, step.plan)?.let { seconds ->
+                                ExerciseCountdown(stepKey = state.index, totalSeconds = seconds)
+                            }
+                            if (state.adjusting) {
+                                when (step.type) {
+                                    ExerciseType.STRENGTH, ExerciseType.BODYWEIGHT -> Stepper(
+                                        label = stringResource(R.string.reps),
+                                        value = (actual.reps ?: 0).toString(),
+                                        onMinus = { vm.nudge(Metric.REPS, -1) },
+                                        onPlus = { vm.nudge(Metric.REPS, 1) },
+                                    )
+                                    else -> Unit
+                                }
+                                if (step.type == ExerciseType.STRENGTH) {
+                                    Stepper(
+                                        label = stringResource(R.string.weight_kg),
+                                        value = GermanNumbers.format(actual.weightKg ?: 0.0),
+                                        onMinus = { vm.nudge(Metric.WEIGHT, -1) },
+                                        onPlus = { vm.nudge(Metric.WEIGHT, 1) },
+                                    )
+                                }
+                                if (step.type == ExerciseType.TIMED) {
+                                    Stepper(
+                                        label = stringResource(R.string.duration_sec),
+                                        value = (actual.durationSec ?: 0).toString(),
+                                        onMinus = { vm.nudge(Metric.SECONDS, -1) },
+                                        onPlus = { vm.nudge(Metric.SECONDS, 1) },
+                                    )
+                                }
+                                if (step.type == ExerciseType.CARDIO) {
+                                    Stepper(
+                                        label = stringResource(R.string.distance_km),
+                                        value = actual.distanceKm?.let(GermanNumbers::format) ?: "–",
+                                        onMinus = { vm.nudge(Metric.DISTANCE, -1) },
+                                        onPlus = { vm.nudge(Metric.DISTANCE, 1) },
+                                    )
+                                    Stepper(
+                                        label = stringResource(R.string.duration_min),
+                                        value = actual.durationMin?.toString() ?: "–",
+                                        onMinus = { vm.nudge(Metric.MINUTES, -1) },
+                                        onPlus = { vm.nudge(Metric.MINUTES, 1) },
+                                    )
+                                }
+                            }
+                            Row(
+                                Modifier.fillMaxWidth(0.6f),
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            ) {
+                                Button(
+                                    onClick = vm::completeAsPlanned,
+                                    modifier = Modifier.weight(1f).height(48.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF2E7D32),
+                                        contentColor = Color.White,
+                                    ),
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Check,
+                                        contentDescription = stringResource(R.string.done_as_planned),
+                                        modifier = Modifier.size(24.dp),
+                                    )
+                                }
+                                Button(
+                                    onClick = if (state.adjusting) vm::confirmAdjusted else vm::startAdjusting,
+                                    modifier = Modifier.weight(1f).height(48.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF1565C0),
+                                        contentColor = Color.White,
+                                    ),
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Check,
+                                        contentDescription = stringResource(
+                                            if (state.adjusting) R.string.confirm_actual else R.string.done_differently,
+                                        ),
+                                        modifier = Modifier.size(24.dp),
+                                    )
+                                }
+                            }
                         }
                     }
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     OutlinedButton(
                         onClick = vm::requestDiscard,
                         modifier = Modifier.weight(1f).height(64.dp),
@@ -778,9 +804,9 @@ private fun PlannedParameters(step: SessionStep) {
 
 @Composable
 private fun ParameterLine(label: String, value: String) {
-    Column {
-        Text(label, style = MaterialTheme.typography.titleMedium)
-        Text(value, style = MaterialTheme.typography.displaySmall)
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, style = trainingText(MaterialTheme.typography.titleMedium), textAlign = TextAlign.Center)
+        Text(value, style = trainingText(MaterialTheme.typography.displaySmall), textAlign = TextAlign.Center)
     }
 }
 
@@ -798,9 +824,17 @@ private fun ExerciseCountdown(stepKey: Int, totalSeconds: Int) {
         now = System.currentTimeMillis()
     }
     val remaining = ((endsAt - now).coerceAtLeast(0) + 999) / 1000
-    Column {
-        Text(stringResource(R.string.exercise_timer), style = MaterialTheme.typography.titleMedium)
-        Text("%d:%02d".format(remaining / 60, remaining % 60), style = MaterialTheme.typography.displaySmall)
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            stringResource(R.string.exercise_timer),
+            style = trainingText(MaterialTheme.typography.titleMedium),
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            "%d:%02d".format(remaining / 60, remaining % 60),
+            style = trainingText(MaterialTheme.typography.displaySmall),
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
@@ -816,18 +850,26 @@ private fun RestBanner(endsAt: Long?) {
         now = System.currentTimeMillis()
     }
     val remaining = ((endsAt - now).coerceAtLeast(0) + 999) / 1000
-    Column {
-        Text(stringResource(if (remaining == 0L) R.string.rest_done else R.string.rest_timer))
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            stringResource(if (remaining == 0L) R.string.rest_done else R.string.rest_timer),
+            style = trainingText(MaterialTheme.typography.bodyLarge),
+            textAlign = TextAlign.Center,
+        )
         if (remaining > 0) {
-            Text("%d:%02d".format(remaining / 60, remaining % 60), style = MaterialTheme.typography.displaySmall)
+            Text(
+                "%d:%02d".format(remaining / 60, remaining % 60),
+                style = trainingText(MaterialTheme.typography.displaySmall),
+                textAlign = TextAlign.Center,
+            )
         }
     }
 }
 
 @Composable
 private fun Stepper(label: String, value: String, onMinus: () -> Unit, onPlus: () -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        Text(label, style = MaterialTheme.typography.titleMedium)
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, style = trainingText(MaterialTheme.typography.titleMedium), textAlign = TextAlign.Center)
         Row(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -836,10 +878,16 @@ private fun Stepper(label: String, value: String, onMinus: () -> Unit, onPlus: (
             FilledTonalButton(onClick = onMinus, modifier = Modifier.size(72.dp)) {
                 Icon(Icons.Filled.Remove, contentDescription = stringResource(R.string.minus))
             }
-            Text(value, style = MaterialTheme.typography.displaySmall)
+            Text(value, style = trainingText(MaterialTheme.typography.displaySmall), textAlign = TextAlign.Center)
             FilledTonalButton(onClick = onPlus, modifier = Modifier.size(72.dp)) {
                 Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.plus))
             }
         }
     }
+}
+
+/** Training copy is one and a half times the theme size. Button labels are not passed through this. */
+@Composable
+private fun trainingText(style: TextStyle): TextStyle {
+    return style.copy(fontSize = style.fontSize * 1.5f, lineHeight = style.lineHeight * 1.5f)
 }
