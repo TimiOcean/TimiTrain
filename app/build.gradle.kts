@@ -6,6 +6,17 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+val releaseStoreFile = System.getenv("TIMITRAIN_STORE_FILE")?.takeIf { it.isNotBlank() }
+val releaseStorePassword = System.getenv("TIMITRAIN_STORE_PASSWORD")?.takeIf { it.isNotBlank() }
+val releaseKeyAlias = System.getenv("TIMITRAIN_KEY_ALIAS")?.takeIf { it.isNotBlank() }
+val releaseKeyPassword = System.getenv("TIMITRAIN_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
+val releaseSigningReady = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { it != null }
+
 android {
     namespace = "de.timitrain"
     compileSdk = 35
@@ -14,13 +25,28 @@ android {
         applicationId = "de.timitrain"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = System.getenv("TIMITRAIN_VERSION_CODE")?.toIntOrNull() ?: 1
+        versionName = System.getenv("TIMITRAIN_VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "1.0"
+    }
+
+    signingConfigs {
+        if (releaseSigningReady) {
+            create("release") {
+                storeFile = file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            isShrinkResources = false
+            if (releaseSigningReady) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

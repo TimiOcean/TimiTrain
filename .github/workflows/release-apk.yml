@@ -1,0 +1,62 @@
+name: Release APK
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v4
+
+      - name: Decode the release keystore
+        env:
+          TIMITRAIN_KEYSTORE_BASE64: ${{ secrets.TIMITRAIN_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$TIMITRAIN_KEYSTORE_BASE64" ]; then
+            echo "TIMITRAIN_KEYSTORE_BASE64 is missing. Add the release keystore as a GitHub Actions secret."
+            exit 1
+          fi
+          printf '%s' "$TIMITRAIN_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/timitrain-release.keystore"
+
+      - name: Assemble the signed release
+        env:
+          TIMITRAIN_STORE_FILE: ${{ runner.temp }}/timitrain-release.keystore
+          TIMITRAIN_STORE_PASSWORD: ${{ secrets.TIMITRAIN_STORE_PASSWORD }}
+          TIMITRAIN_KEY_ALIAS: ${{ secrets.TIMITRAIN_KEY_ALIAS }}
+          TIMITRAIN_KEY_PASSWORD: ${{ secrets.TIMITRAIN_KEY_PASSWORD }}
+          TIMITRAIN_VERSION_CODE: ${{ github.run_number }}
+        run: |
+          if [ -z "$TIMITRAIN_STORE_PASSWORD" ] || [ -z "$TIMITRAIN_KEY_ALIAS" ] || [ -z "$TIMITRAIN_KEY_PASSWORD" ]; then
+            echo "Release signing secrets are missing."
+            exit 1
+          fi
+          export TIMITRAIN_VERSION_NAME="${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}"
+          ./gradlew assembleRelease --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/TimiTrain.apk"
+
+      - name: Publish TimiTrain.apk on aktuell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view aktuell --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload aktuell "$RUNNER_TEMP/TimiTrain.apk" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create aktuell "$RUNNER_TEMP/TimiTrain.apk" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Aktuell" \
+              --notes "Die aktuelle installierbare Version." \
+              --latest=false
+          fi

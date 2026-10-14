@@ -19,6 +19,69 @@ fun ExerciseType.stored(): String = name
 fun String.toExerciseType(): ExerciseType = ExerciseType.valueOf(this)
 
 /**
+ * Plan section. Independent of [ExerciseType]: a timed exercise can be Kraft
+ * (Seitstütz) or Mobility, and Cardio is its own section.
+ */
+enum class ExerciseCategory {
+    CARDIO,
+    STRENGTH,
+    MOBILITY,
+}
+
+fun ExerciseCategory.stored(): String = name
+
+fun String.toExerciseCategory(): ExerciseCategory = ExerciseCategory.valueOf(this)
+
+fun String.toExerciseCategoryOrNull(): ExerciseCategory? = try {
+    ExerciseCategory.valueOf(this)
+} catch (_: IllegalArgumentException) {
+    null
+}
+
+/** Seconds for the exercise countdown. Null when this set has no planned duration. */
+fun countdownSeconds(type: ExerciseType, plan: SetValues): Int? = when (type) {
+    ExerciseType.TIMED -> plan.durationSec?.takeIf { it > 0 }
+    ExerciseType.CARDIO -> plan.durationMin?.takeIf { it > 0 }?.times(60)
+    else -> null
+}
+
+data class CategorizedSlot(
+    val id: Long,
+    val position: Int,
+    val category: ExerciseCategory,
+)
+
+/**
+ * Stored slot order is Cardio, then Kraft, then Mobility. Inside a section the
+ * previous positions decide the order. Reordering a section only reassigns
+ * the positions that section already held. [canonicalPositions] then packs
+ * those positions so training walks the same order.
+ */
+object WorkoutSections {
+    fun grouped(slots: List<CategorizedSlot>): List<List<CategorizedSlot>> {
+        return ExerciseCategory.entries.map { category ->
+            slots.filter { it.category == category }.sortedBy { it.position }
+        }
+    }
+
+    fun canonicalPositions(slots: List<CategorizedSlot>): Map<Long, Int> {
+        return grouped(slots).flatten().mapIndexed { index, slot -> slot.id to index }.toMap()
+    }
+
+    fun positionsAfterReorder(
+        slots: List<CategorizedSlot>,
+        category: ExerciseCategory,
+        orderedIds: List<Long>,
+    ): Map<Long, Int> {
+        val section = slots.filter { it.category == category }.sortedBy { it.position }
+        val positions = section.map { it.position }
+        require(orderedIds.size == section.size)
+        require(orderedIds.toSet() == section.map { it.id }.toSet())
+        return orderedIds.zip(positions).toMap()
+    }
+}
+
+/**
  * Initial increment and rest values. The spec requires a sensible starting
  * point and that the user can change it. These numbers are not a locked default.
  * Wiederholungen are not listed: their step is always [RepsStep.STEP].

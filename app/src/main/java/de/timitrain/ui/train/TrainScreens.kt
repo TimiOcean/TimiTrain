@@ -4,13 +4,16 @@ import android.database.sqlite.SQLiteConstraintException
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -21,6 +24,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -40,9 +44,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -58,7 +64,9 @@ import de.timitrain.data.db.WorkoutEntity
 import de.timitrain.data.sortedGraph
 import de.timitrain.data.toValues
 import de.timitrain.domain.AppClock
+import de.timitrain.domain.ExerciseCategory
 import de.timitrain.domain.ExerciseType
+import de.timitrain.domain.countdownSeconds
 import de.timitrain.domain.RepsStep
 import de.timitrain.domain.GermanNumbers
 import de.timitrain.domain.Increments
@@ -69,9 +77,12 @@ import de.timitrain.domain.SessionFact
 import de.timitrain.domain.SetStepper
 import de.timitrain.domain.SetValues
 import de.timitrain.domain.StreakRules
+import de.timitrain.domain.toExerciseCategory
 import de.timitrain.domain.toExerciseType
 import de.timitrain.timer.RestChime
 import de.timitrain.timer.RestScheduler
+import de.timitrain.ui.categoryLabel
+import de.timitrain.ui.markColor
 import de.timitrain.ui.rememberApp
 import de.timitrain.ui.viewModelFactory
 import kotlinx.coroutines.Job
@@ -97,6 +108,7 @@ data class SessionStep(
     val exerciseId: Long,
     val exerciseName: String,
     val type: ExerciseType,
+    val category: ExerciseCategory,
     val setPosition: Int,
     val setNumber: Int,
     val setCount: Int,
@@ -327,6 +339,7 @@ data class SessionUi(
     val askDiscard: Boolean = false,
     val saved: Boolean = false,
     val failed: Boolean = false,
+    val adjusting: Boolean = false,
 )
 
 @Composable
@@ -411,6 +424,7 @@ class SessionViewModel(
                         exerciseId = exercise.id,
                         exerciseName = exercise.name,
                         type = exercise.type.toExerciseType(),
+                        category = exercise.category.toExerciseCategory(),
                         setPosition = set.position,
                         setNumber = index + 1,
                         setCount = sets.size,
@@ -476,14 +490,36 @@ class SessionViewModel(
         _state.value = current.copy(actuals = current.actuals.toMutableList().also { it[index] = updated })
     }
 
-    fun completeSet() {
+    fun startAdjusting() {
+        val current = _state.value
+        if (current.index !in current.steps.indices || current.index in current.completed) return
+        _state.value = current.copy(adjusting = true)
+    }
+
+    /** Green check: store the planned values, the same result as a checkmark that was never nudged. */
+    fun completeAsPlanned() {
+        finishCurrentSet(usePlan = true)
+    }
+
+    /** Blue check after plus and minus: store the edited values, the same result as today's nudged checkmark. */
+    fun confirmAdjusted() {
+        finishCurrentSet(usePlan = false)
+    }
+
+    private fun finishCurrentSet(usePlan: Boolean) {
         val current = _state.value
         val index = current.index
         if (index !in current.steps.indices || index in current.completed) return
         val step = current.steps[index]
+        val actuals = current.actuals.toMutableList()
+        if (usePlan) actuals[index] = step.plan
         val completed = current.completed + index
-        val next = index + 1
-        _state.value = current.copy(completed = completed, index = next)
+        _state.value = current.copy(
+            actuals = actuals,
+            completed = completed,
+            index = index + 1,
+            adjusting = false,
+        )
         armRest(step.restSecondsOverride ?: defaultRest)
     }
 
@@ -596,64 +632,101 @@ private fun SessionScreen(state: SessionUi, vm: SessionViewModel, onLeave: () ->
                     )
                 } else {
                     val actual = state.actuals[state.index]
-                    Text(step.exerciseName, style = MaterialTheme.typography.headlineSmall)
-                    Text(stringResource(R.string.set_of, step.setNumber, step.setCount))
-                    Text(stringResource(R.string.plan_label), style = MaterialTheme.typography.labelLarge)
-                    Text(
-                        GermanNumbers.formatSet(step.plan, step.type),
-                        style = MaterialTheme.typography.displaySmall,
-                    )
-                    step.lastTime?.let { last ->
-                        Text(stringResource(R.string.last_time, GermanNumbers.formatSet(last, step.type)))
-                    }
-                    when (step.type) {
-                        ExerciseType.STRENGTH, ExerciseType.BODYWEIGHT -> Stepper(
-                            label = stringResource(R.string.reps),
-                            value = (actual.reps ?: 0).toString(),
-                            onMinus = { vm.nudge(Metric.REPS, -1) },
-                            onPlus = { vm.nudge(Metric.REPS, 1) },
-                        )
-                        else -> Unit
-                    }
-                    if (step.type == ExerciseType.STRENGTH) {
-                        Stepper(
-                            label = stringResource(R.string.weight_kg),
-                            value = GermanNumbers.format(actual.weightKg ?: 0.0),
-                            onMinus = { vm.nudge(Metric.WEIGHT, -1) },
-                            onPlus = { vm.nudge(Metric.WEIGHT, 1) },
-                        )
-                    }
-                    if (step.type == ExerciseType.TIMED) {
-                        Stepper(
-                            label = stringResource(R.string.duration_sec),
-                            value = (actual.durationSec ?: 0).toString(),
-                            onMinus = { vm.nudge(Metric.SECONDS, -1) },
-                            onPlus = { vm.nudge(Metric.SECONDS, 1) },
-                        )
-                    }
-                    if (step.type == ExerciseType.CARDIO) {
-                        Stepper(
-                            label = stringResource(R.string.distance_km),
-                            value = actual.distanceKm?.let(GermanNumbers::format) ?: "–",
-                            onMinus = { vm.nudge(Metric.DISTANCE, -1) },
-                            onPlus = { vm.nudge(Metric.DISTANCE, 1) },
-                        )
-                        Stepper(
-                            label = stringResource(R.string.duration_min),
-                            value = actual.durationMin?.toString() ?: "–",
-                            onMinus = { vm.nudge(Metric.MINUTES, -1) },
-                            onPlus = { vm.nudge(Metric.MINUTES, 1) },
-                        )
-                    }
-                    Button(
-                        onClick = vm::completeSet,
-                        modifier = Modifier.fillMaxWidth().height(80.dp),
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Icon(
-                            Icons.Filled.Check,
-                            contentDescription = stringResource(R.string.complete_set),
-                            modifier = Modifier.size(40.dp),
+                        Box(
+                            Modifier
+                                .width(8.dp)
+                                .height(28.dp)
+                                .background(step.category.markColor(), RoundedCornerShape(4.dp)),
                         )
+                        Text(
+                            categoryLabel(step.category),
+                            color = step.category.markColor(),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    }
+                    Text(step.exerciseName, style = MaterialTheme.typography.headlineSmall)
+                    if (!state.adjusting) {
+                        PlannedParameters(step)
+                    }
+                    countdownSeconds(step.type, step.plan)?.let { seconds ->
+                        ExerciseCountdown(stepKey = state.index, totalSeconds = seconds)
+                    }
+                    if (state.adjusting) {
+                        when (step.type) {
+                            ExerciseType.STRENGTH, ExerciseType.BODYWEIGHT -> Stepper(
+                                label = stringResource(R.string.reps),
+                                value = (actual.reps ?: 0).toString(),
+                                onMinus = { vm.nudge(Metric.REPS, -1) },
+                                onPlus = { vm.nudge(Metric.REPS, 1) },
+                            )
+                            else -> Unit
+                        }
+                        if (step.type == ExerciseType.STRENGTH) {
+                            Stepper(
+                                label = stringResource(R.string.weight_kg),
+                                value = GermanNumbers.format(actual.weightKg ?: 0.0),
+                                onMinus = { vm.nudge(Metric.WEIGHT, -1) },
+                                onPlus = { vm.nudge(Metric.WEIGHT, 1) },
+                            )
+                        }
+                        if (step.type == ExerciseType.TIMED) {
+                            Stepper(
+                                label = stringResource(R.string.duration_sec),
+                                value = (actual.durationSec ?: 0).toString(),
+                                onMinus = { vm.nudge(Metric.SECONDS, -1) },
+                                onPlus = { vm.nudge(Metric.SECONDS, 1) },
+                            )
+                        }
+                        if (step.type == ExerciseType.CARDIO) {
+                            Stepper(
+                                label = stringResource(R.string.distance_km),
+                                value = actual.distanceKm?.let(GermanNumbers::format) ?: "–",
+                                onMinus = { vm.nudge(Metric.DISTANCE, -1) },
+                                onPlus = { vm.nudge(Metric.DISTANCE, 1) },
+                            )
+                            Stepper(
+                                label = stringResource(R.string.duration_min),
+                                value = actual.durationMin?.toString() ?: "–",
+                                onMinus = { vm.nudge(Metric.MINUTES, -1) },
+                                onPlus = { vm.nudge(Metric.MINUTES, 1) },
+                            )
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = vm::completeAsPlanned,
+                            modifier = Modifier.weight(1f).height(80.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF2E7D32),
+                                contentColor = Color.White,
+                            ),
+                        ) {
+                            Icon(
+                                Icons.Filled.Check,
+                                contentDescription = stringResource(R.string.done_as_planned),
+                                modifier = Modifier.size(40.dp),
+                            )
+                        }
+                        Button(
+                            onClick = if (state.adjusting) vm::confirmAdjusted else vm::startAdjusting,
+                            modifier = Modifier.weight(1f).height(80.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF1565C0),
+                                contentColor = Color.White,
+                            ),
+                        ) {
+                            Icon(
+                                Icons.Filled.Check,
+                                contentDescription = stringResource(
+                                    if (state.adjusting) R.string.confirm_actual else R.string.done_differently,
+                                ),
+                                modifier = Modifier.size(40.dp),
+                            )
+                        }
                     }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -682,6 +755,52 @@ private fun SessionScreen(state: SessionUi, vm: SessionViewModel, onLeave: () ->
                 TextButton(onClick = vm::dismissDiscard) { Text(stringResource(R.string.cancel)) }
             },
         )
+    }
+}
+
+@Composable
+private fun PlannedParameters(step: SessionStep) {
+    val plan = step.plan
+    if (step.type == ExerciseType.STRENGTH || step.type == ExerciseType.BODYWEIGHT) {
+        ParameterLine(stringResource(R.string.reps), (plan.reps ?: 0).toString())
+    }
+    if (step.type == ExerciseType.STRENGTH) {
+        ParameterLine(stringResource(R.string.weight_kg), GermanNumbers.format(plan.weightKg ?: 0.0))
+    }
+    if (step.type == ExerciseType.TIMED) {
+        ParameterLine(stringResource(R.string.duration_sec), (plan.durationSec ?: 0).toString())
+    }
+    if (step.type == ExerciseType.CARDIO) {
+        plan.distanceKm?.let { ParameterLine(stringResource(R.string.distance_km), GermanNumbers.format(it)) }
+        plan.durationMin?.let { ParameterLine(stringResource(R.string.duration_min), it.toString()) }
+    }
+}
+
+@Composable
+private fun ParameterLine(label: String, value: String) {
+    Column {
+        Text(label, style = MaterialTheme.typography.titleMedium)
+        Text(value, style = MaterialTheme.typography.displaySmall)
+    }
+}
+
+@Composable
+private fun ExerciseCountdown(stepKey: Int, totalSeconds: Int) {
+    var endsAt by remember(stepKey, totalSeconds) {
+        mutableLongStateOf(System.currentTimeMillis() + totalSeconds * 1000L)
+    }
+    var now by remember(endsAt) { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(endsAt) {
+        while (System.currentTimeMillis() < endsAt) {
+            now = System.currentTimeMillis()
+            delay(200)
+        }
+        now = System.currentTimeMillis()
+    }
+    val remaining = ((endsAt - now).coerceAtLeast(0) + 999) / 1000
+    Column {
+        Text(stringResource(R.string.exercise_timer), style = MaterialTheme.typography.titleMedium)
+        Text("%d:%02d".format(remaining / 60, remaining % 60), style = MaterialTheme.typography.displaySmall)
     }
 }
 

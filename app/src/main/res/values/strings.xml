@@ -28,6 +28,16 @@
     <string name="type_bodyweight">Körpergewicht</string>
     <string name="type_timed">Zeitbasiert</string>
     <string name="type_cardio">Cardio</string>
+    <string name="category_label">Bereich</string>
+    <string name="category_cardio">Cardio</string>
+    <string name="category_strength">Kraft</string>
+    <string name="category_mobility">Mobility</string>
+    <string name="add_exercise">Übung hinzufügen</string>
+    <string name="done_as_planned">Wie geplant</string>
+    <string name="done_differently">Anders</string>
+    <string name="confirm_actual">Werte übernehmen</string>
+    <string name="exercise_timer">Übung</string>
+    <string name="expand_slot">Übung aufklappen</string>
     <string name="cancel">Abbrechen</string>
     <string name="save">Speichern</string>
     <string name="delete">Löschen</string>

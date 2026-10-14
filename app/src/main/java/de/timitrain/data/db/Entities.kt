@@ -1,5 +1,6 @@
 package de.timitrain.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -10,6 +11,7 @@ data class ExerciseEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
     val type: String,
+    @ColumnInfo(defaultValue = "'STRENGTH'") val category: String = "STRENGTH",
     val repsIncrement: Int? = null,
     val weightIncrementKg: Double? = null,
     val durationIncrementSec: Int? = null,

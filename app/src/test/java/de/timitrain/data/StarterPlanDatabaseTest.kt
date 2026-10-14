@@ -2,7 +2,9 @@ package de.timitrain.data
 
 import android.app.Application
 import de.timitrain.data.db.TimiTrainDatabase
+import de.timitrain.domain.ExerciseCategory
 import de.timitrain.domain.ExerciseType
+import de.timitrain.domain.toExerciseCategory
 import de.timitrain.domain.Increments
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -56,7 +58,23 @@ class StarterPlanDatabaseTest {
         assertTrue(week.values.none { it.workoutId == workouts.getValue(StarterPlan.MOBILITY_C).id })
 
         val friday = repository.loadWorkout(workouts.getValue(StarterPlan.LOWER).id)!!
-        val fridayCardio = friday.slots.last().alternatives.single()
+        assertEquals(
+            listOf(
+                StarterPlan.CARDIO,
+                "Hip Thrust",
+                "Beinbeuger",
+                "Beinstrecker",
+                "Bird Dog pro Seite",
+                "Seitstütz",
+                "Deep Squat Hold",
+                "90/90-Hip-Switch",
+                "World's Greatest Stretch",
+                "Glute Bridge",
+                "Leg Swings",
+            ),
+            friday.slots.map { it.alternatives.first().exercise.name },
+        )
+        val fridayCardio = friday.slots.first().alternatives.single()
         assertEquals(StarterPlan.CARDIO, fridayCardio.exercise.name)
         assertEquals(StarterPlan.FRIDAY_CARDIO_MINUTES, fridayCardio.sets.single().durationMin)
         assertNull(fridayCardio.sets.single().distanceKm)
@@ -72,6 +90,38 @@ class StarterPlanDatabaseTest {
         val birdDogMobility = mobility.slots.flatMap { it.alternatives }
             .single { it.exercise.name == "Bird Dog (Mobility)" }
         assertEquals(120, birdDogMobility.sets.single().durationSec)
+
+        val byName = db.exercises().listAll().associateBy { it.name }
+        assertEquals(ExerciseCategory.CARDIO, byName.getValue(StarterPlan.CARDIO).category.toExerciseCategory())
+        assertEquals(ExerciseCategory.MOBILITY, byName.getValue("Bird Dog (Mobility)").category.toExerciseCategory())
+        assertEquals(ExerciseCategory.MOBILITY, byName.getValue("Cat-Cow").category.toExerciseCategory())
+        assertEquals(ExerciseCategory.STRENGTH, byName.getValue("Seitstütz").category.toExerciseCategory())
+        assertEquals(ExerciseCategory.STRENGTH, byName.getValue("Bird Dog pro Seite").category.toExerciseCategory())
+        assertEquals(ExerciseCategory.STRENGTH, byName.getValue("Kurzhantel-Schrägbankdrücken").category.toExerciseCategory())
+        assertTrue(byName.values.all { it.category.toExerciseCategory() in ExerciseCategory.entries })
+
+        val extraId = repository.createExercise(
+            "Zusatz-Kraft",
+            ExerciseType.STRENGTH,
+            Increments(),
+            emptyList(),
+            ExerciseCategory.STRENGTH,
+        )
+        repository.addSlot(friday.workout.id, extraId)
+        val withExtra = repository.loadWorkout(friday.workout.id)!!
+        val extraNames = withExtra.slots.map { it.alternatives.first().exercise.name }
+        assertEquals(extraNames.indexOf("Seitstütz") + 1, extraNames.indexOf("Zusatz-Kraft"))
+        assertEquals(extraNames.indexOf("Zusatz-Kraft") + 1, extraNames.indexOf("Deep Squat Hold"))
+        val hip = withExtra.slots.first { it.alternatives.first().exercise.name == "Hip Thrust" }
+        val bein = withExtra.slots.first { it.alternatives.first().exercise.name == "Beinbeuger" }
+        repository.reorderSlotPositions(
+            mapOf(hip.slot.id to bein.slot.position, bein.slot.id to hip.slot.position),
+        )
+        val reordered = repository.loadWorkout(friday.workout.id)!!.slots.map { it.alternatives.first().exercise.name }
+        assertEquals(StarterPlan.CARDIO, reordered.first())
+        assertEquals("Beinbeuger", reordered[1])
+        assertEquals("Hip Thrust", reordered[2])
+        assertEquals("Deep Squat Hold", reordered[reordered.indexOf("Zusatz-Kraft") + 1])
 
         val exercises = db.exercises().listAll().size
         val workoutCount = db.workouts().listAll().size
