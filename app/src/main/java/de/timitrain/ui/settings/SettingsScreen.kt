@@ -18,6 +18,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -49,6 +52,7 @@ import kotlinx.coroutines.launch
 
 data class SettingsUi(
     val restText: String = "",
+    val darkMode: Boolean = false,
     val loaded: Boolean = false,
     val problem: InputProblem? = null,
     val notice: String? = null,
@@ -74,6 +78,7 @@ fun SettingsRoute(onBack: () -> Unit) {
         onBack = onBack,
         onRestChange = vm::onRestChange,
         onSaveRest = vm::saveRest,
+        onDarkMode = vm::onDarkMode,
         onExport = { exportLauncher.launch("timitrain.json") },
         onImport = { importLauncher.launch(arrayOf("application/json", "text/*", "*/*")) },
         onConfirmImport = vm::confirmImport,
@@ -91,8 +96,15 @@ class SettingsViewModel(
     init {
         viewModelScope.launch {
             val seconds = repository.restSeconds()
-            _state.value = SettingsUi(restText = seconds.toString(), loaded = true)
+            val dark = repository.isDarkMode()
+            _state.value = SettingsUi(restText = seconds.toString(), darkMode = dark, loaded = true)
         }
+    }
+
+    fun onDarkMode(dark: Boolean) {
+        if (!_state.value.loaded) return
+        _state.value = _state.value.copy(darkMode = dark, problem = null, notice = null)
+        viewModelScope.launch { repository.setDarkMode(dark) }
     }
 
     fun onRestChange(text: String) {
@@ -174,6 +186,7 @@ private fun SettingsScreen(
     onBack: () -> Unit,
     onRestChange: (String) -> Unit,
     onSaveRest: () -> Unit,
+    onDarkMode: (Boolean) -> Unit,
     onExport: () -> Unit,
     onImport: () -> Unit,
     onConfirmImport: () -> Unit,
@@ -196,6 +209,25 @@ private fun SettingsScreen(
             Modifier.padding(padding).padding(16.dp).fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            Text(stringResource(R.string.appearance))
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                SegmentedButton(
+                    selected = !state.darkMode,
+                    onClick = { onDarkMode(false) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                    enabled = state.loaded,
+                ) {
+                    Text(stringResource(R.string.theme_light))
+                }
+                SegmentedButton(
+                    selected = state.darkMode,
+                    onClick = { onDarkMode(true) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                    enabled = state.loaded,
+                ) {
+                    Text(stringResource(R.string.theme_dark))
+                }
+            }
             OutlinedTextField(
                 value = rest,
                 onValueChange = {

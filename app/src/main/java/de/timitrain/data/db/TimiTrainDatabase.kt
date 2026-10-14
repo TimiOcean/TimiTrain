@@ -28,7 +28,7 @@ import de.timitrain.domain.toExerciseCategoryOrNull
         SessionRotationSnapshotEntity::class,
         SettingsEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class TimiTrainDatabase : RoomDatabase() {
@@ -47,7 +47,13 @@ abstract class TimiTrainDatabase : RoomDatabase() {
                 context.applicationContext,
                 TimiTrainDatabase::class.java,
                 "timitrain.db",
-            ).addCallback(SeedCallback).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build()
+            ).addCallback(SeedCallback).addMigrations(
+                MIGRATION_1_2,
+                MIGRATION_2_3,
+                MIGRATION_3_4,
+                MIGRATION_4_5,
+                MIGRATION_5_6,
+            ).build()
         }
 
         internal fun createInMemory(context: Context): TimiTrainDatabase {
@@ -154,13 +160,19 @@ private val MIGRATION_4_5 = object : Migration(4, 5) {
     }
 }
 
+private val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE settings ADD COLUMN darkMode INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
 private object SeedCallback : RoomDatabase.Callback() {
     override fun onCreate(db: SupportSQLiteDatabase) {
         for (weekday in 1..7) {
             db.execSQL("INSERT INTO week_plan (weekday, workoutId) VALUES ($weekday, NULL)")
         }
         db.execSQL(
-            "INSERT INTO settings (id, defaultRestSeconds) VALUES (1, ${InitialNumbers.DEFAULT_REST_SECONDS})",
+            "INSERT INTO settings (id, defaultRestSeconds, darkMode) VALUES (1, ${InitialNumbers.DEFAULT_REST_SECONDS}, 0)",
         )
     }
 }

@@ -93,6 +93,9 @@
     <string name="session_done">Alle geplanten Sätze sind abgehakt.</string>
     <string name="rest_timer">Pause</string>
     <string name="rest_done">Pause beendet</string>
+    <string name="appearance">Darstellung</string>
+    <string name="theme_light">Hell</string>
+    <string name="theme_dark">Dunkel</string>
     <string name="default_rest">Standard-Pause (Sekunden)</string>
     <string name="export_json">Exportieren</string>
     <string name="import_json">Importieren</string>

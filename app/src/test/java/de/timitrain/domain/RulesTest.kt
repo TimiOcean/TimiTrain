@@ -329,6 +329,7 @@ class BackupCodecTest {
         val document = sample()
         val json = BackupCodec.encode(document)
         assertFalse(json.contains("defaultRest"))
+        assertFalse(json.contains("darkMode"))
         val read = BackupCodec.decode(json)
         assertTrue(read is BackupRead.Ok)
         assertEquals(document, (read as BackupRead.Ok).document)

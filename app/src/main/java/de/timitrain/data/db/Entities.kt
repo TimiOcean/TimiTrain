@@ -221,6 +221,7 @@ data class SessionRotationSnapshotEntity(
 data class SettingsEntity(
     @PrimaryKey val id: Int = SETTINGS_ROW,
     val defaultRestSeconds: Int,
+    @ColumnInfo(defaultValue = "0") val darkMode: Boolean = false,
 ) {
     companion object {
         const val SETTINGS_ROW = 1

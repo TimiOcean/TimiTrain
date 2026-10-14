@@ -2,7 +2,6 @@ package de.timitrain.ui.train
 
 import android.database.sqlite.SQLiteConstraintException
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
@@ -90,6 +89,7 @@ import de.timitrain.timer.RestChime
 import de.timitrain.timer.RestScheduler
 import de.timitrain.ui.categoryLabel
 import de.timitrain.ui.markColor
+import de.timitrain.ui.theme.LocalTimiDarkTheme
 import de.timitrain.ui.rememberApp
 import de.timitrain.ui.viewModelFactory
 import kotlinx.coroutines.Job
@@ -615,7 +615,7 @@ private fun SessionScreen(state: SessionUi, vm: SessionViewModel, onLeave: () ->
         restNow = System.currentTimeMillis()
     }
     val resting = restEndsAt != null && restNow < restEndsAt
-    val restTint = if (isSystemInDarkTheme()) Color.White.copy(alpha = 0.14f) else Color.Black.copy(alpha = 0.14f)
+    val restTint = if (LocalTimiDarkTheme.current) Color.White.copy(alpha = 0.14f) else Color.Black.copy(alpha = 0.14f)
     Box(Modifier.fillMaxSize()) {
     Scaffold(
         topBar = {

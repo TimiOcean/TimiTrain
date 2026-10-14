@@ -453,12 +453,28 @@ class TimiTrainRepository(
         return db.settings().get()?.defaultRestSeconds ?: InitialNumbers.DEFAULT_REST_SECONDS
     }
 
+    suspend fun isDarkMode(): Boolean = db.settings().get()?.darkMode == true
+
     suspend fun setRestSeconds(seconds: Int) {
         val current = db.settings().get()
         if (current == null) {
             db.settings().insert(SettingsEntity(defaultRestSeconds = seconds))
         } else {
             db.settings().update(current.copy(defaultRestSeconds = seconds))
+        }
+    }
+
+    suspend fun setDarkMode(dark: Boolean) {
+        val current = db.settings().get()
+        if (current == null) {
+            db.settings().insert(
+                SettingsEntity(
+                    defaultRestSeconds = InitialNumbers.DEFAULT_REST_SECONDS,
+                    darkMode = dark,
+                ),
+            )
+        } else {
+            db.settings().update(current.copy(darkMode = dark))
         }
     }
 
