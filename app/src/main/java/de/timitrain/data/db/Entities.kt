@@ -217,6 +217,26 @@ data class SessionRotationSnapshotEntity(
     val rotationIndex: Int,
 )
 
+@Entity(
+    tableName = "session_default_weight_snapshots",
+    foreignKeys = [
+        ForeignKey(
+            entity = SessionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sessionId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("sessionId")],
+)
+data class SessionDefaultWeightSnapshotEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sessionId: Long,
+    val exerciseId: Long,
+    val position: Int,
+    val weightKg: Double? = null,
+)
+
 @Entity(tableName = "settings")
 data class SettingsEntity(
     @PrimaryKey val id: Int = SETTINGS_ROW,

@@ -1,7 +1,6 @@
 package de.timitrain.domain
 
 import java.math.BigDecimal
-import java.math.RoundingMode
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -165,53 +164,37 @@ object SetStepper {
     }
 }
 
-object PlanAdjustment {
-    /**
-     * Moves the plan halfway toward the actual, then rounds as specified:
-     * kilograms to 1 kg, reps, seconds and minutes to integers, distance to 0.1 km.
-     *
-     * A result that lands exactly on a half unit (for example 50.5 kg) is an open
-     * product question. [RoundingMode.HALF_UP] is only here so the screen can store
-     * a rounded number. It is not a product decision and is not covered by tests.
-     * Metrics with no plan value are left unchanged.
-     */
-    fun adjust(plan: SetValues, actual: SetValues, type: ExerciseType): SetValues {
-        return when (type) {
-            ExerciseType.STRENGTH -> plan.copy(
-                reps = adjustInt(plan.reps, actual.reps),
-                weightKg = adjustDecimal(plan.weightKg, actual.weightKg, scale = 0),
-            )
-            ExerciseType.BODYWEIGHT -> plan.copy(
-                reps = adjustInt(plan.reps, actual.reps),
-            )
-            ExerciseType.TIMED -> plan.copy(
-                durationSec = adjustInt(plan.durationSec, actual.durationSec),
-            )
-            ExerciseType.CARDIO -> plan.copy(
-                distanceKm = adjustDecimal(plan.distanceKm, actual.distanceKm, scale = 1),
-                durationMin = adjustInt(plan.durationMin, actual.durationMin),
-            )
+/**
+ * A logged strength weight replaces the plan weight. There is no halfway step
+ * and no increment bump. Repetitions are not a result of this rule.
+ * An as-planned set, and any exercise without a weight, produce no replacement.
+ */
+object PlanWeight {
+    fun loggedWeight(type: ExerciseType, plan: SetValues, actual: SetValues): Double? {
+        if (type != ExerciseType.STRENGTH) return null
+        val weight = actual.weightKg ?: return null
+        val edited = weight != plan.weightKg || actual.reps != plan.reps
+        if (!edited) return null
+        return weight
+    }
+
+    /** Last edited set in [sets] wins for each exercise. Earlier weights are dropped. */
+    fun replacements(sets: List<LoggedSet>): Map<Long, Double> {
+        val weights = linkedMapOf<Long, Double>()
+        for (set in sets) {
+            val weight = loggedWeight(set.type, set.plan, set.actual) ?: continue
+            weights[set.exerciseId] = weight
         }
-    }
-
-    private fun adjustInt(plan: Int?, actual: Int?): Int? {
-        if (plan == null || actual == null) return plan
-        return move(BigDecimal(plan), BigDecimal(actual))
-            .setScale(0, RoundingMode.HALF_UP)
-            .toInt()
-    }
-
-    private fun adjustDecimal(plan: Double?, actual: Double?, scale: Int): Double? {
-        if (plan == null || actual == null) return plan
-        return move(BigDecimal.valueOf(plan), BigDecimal.valueOf(actual))
-            .setScale(scale, RoundingMode.HALF_UP)
-            .toDouble()
-    }
-
-    private fun move(plan: BigDecimal, actual: BigDecimal): BigDecimal {
-        return plan.add(actual.subtract(plan).multiply(BigDecimal("0.5")))
+        return weights
     }
 }
+
+data class LoggedSet(
+    val exerciseId: Long,
+    val type: ExerciseType,
+    val plan: SetValues,
+    val actual: SetValues,
+)
 
 object Rotation {
     fun normalize(index: Int, count: Int): Int {
@@ -314,26 +297,35 @@ data class RotationTouch(
     val beforeIndex: Int,
 )
 
+data class DefaultWeightTouch(
+    val exerciseId: Long,
+    val position: Int,
+    val before: Double?,
+)
+
 data class SessionTouch(
     val sessionId: Long,
     val date: LocalDate,
     val plans: List<PlanTouch>,
     val rotations: List<RotationTouch>,
+    val defaultWeights: List<DefaultWeightTouch> = emptyList(),
 )
 
 data class Rewind(
     val plans: List<PlanTouch>,
     val rotations: List<RotationTouch>,
+    val defaultWeights: List<DefaultWeightTouch> = emptyList(),
 )
 
 /**
  * Restores a deleted session's start snapshots unless a later session already
- * touched the same planned set or the same slot.
+ * touched the same planned set, the same slot, or that exercise's default weight.
  */
 object SessionRewind {
     fun restore(deleted: SessionTouch, others: List<SessionTouch>): Rewind {
         val laterPlans = mutableSetOf<Pair<Long, Int>>()
         val laterSlots = mutableSetOf<Long>()
+        val laterExercises = mutableSetOf<Long>()
         for (other in others) {
             if (!isLater(other, deleted)) continue
             for (plan in other.plans) {
@@ -342,10 +334,14 @@ object SessionRewind {
             for (rotation in other.rotations) {
                 laterSlots += rotation.slotId
             }
+            for (weight in other.defaultWeights) {
+                laterExercises += weight.exerciseId
+            }
         }
         return Rewind(
             plans = deleted.plans.filter { (it.alternativeId to it.setPosition) !in laterPlans },
             rotations = deleted.rotations.filter { it.slotId !in laterSlots },
+            defaultWeights = deleted.defaultWeights.filter { it.exerciseId !in laterExercises },
         )
     }
 

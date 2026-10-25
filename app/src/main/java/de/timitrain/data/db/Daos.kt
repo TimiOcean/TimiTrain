@@ -75,6 +75,9 @@ interface ExerciseDao {
     @Query("SELECT * FROM exercise_default_sets WHERE exerciseId = :exerciseId ORDER BY position, id")
     suspend fun listDefaults(exerciseId: Long): List<ExerciseDefaultSetEntity>
 
+    @Update
+    suspend fun updateDefault(entity: ExerciseDefaultSetEntity)
+
     @Query("SELECT * FROM exercise_default_sets ORDER BY exerciseId, position, id")
     suspend fun allDefaults(): List<ExerciseDefaultSetEntity>
 
@@ -178,6 +181,16 @@ interface PlannedSetDao {
         "SELECT * FROM planned_sets WHERE alternativeId = :alternativeId AND position = :position LIMIT 1",
     )
     suspend fun getAt(alternativeId: Long, position: Int): PlannedSetEntity?
+
+    @Query(
+        """
+        SELECT planned_sets.* FROM planned_sets
+        INNER JOIN slot_alternatives ON slot_alternatives.id = planned_sets.alternativeId
+        WHERE slot_alternatives.exerciseId = :exerciseId
+        ORDER BY planned_sets.id
+        """,
+    )
+    suspend fun listForExercise(exerciseId: Long): List<PlannedSetEntity>
 
     @Insert
     suspend fun insert(entity: PlannedSetEntity): Long
@@ -296,6 +309,15 @@ interface SessionDao {
 
     @Query("DELETE FROM session_rotation_snapshots")
     suspend fun deleteAllRotationSnapshots()
+
+    @Insert
+    suspend fun insertDefaultWeightSnapshot(entity: SessionDefaultWeightSnapshotEntity): Long
+
+    @Query("SELECT * FROM session_default_weight_snapshots ORDER BY id")
+    suspend fun allDefaultWeightSnapshots(): List<SessionDefaultWeightSnapshotEntity>
+
+    @Query("DELETE FROM session_default_weight_snapshots")
+    suspend fun deleteAllDefaultWeightSnapshots()
 }
 
 @Dao

@@ -26,9 +26,10 @@ import de.timitrain.domain.toExerciseCategoryOrNull
         SessionSetEntity::class,
         SessionPlanSnapshotEntity::class,
         SessionRotationSnapshotEntity::class,
+        SessionDefaultWeightSnapshotEntity::class,
         SettingsEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 abstract class TimiTrainDatabase : RoomDatabase() {
@@ -53,6 +54,7 @@ abstract class TimiTrainDatabase : RoomDatabase() {
                 MIGRATION_3_4,
                 MIGRATION_4_5,
                 MIGRATION_5_6,
+                MIGRATION_6_7,
             ).build()
         }
 
@@ -157,6 +159,17 @@ private val MIGRATION_4_5 = object : Migration(4, 5) {
                 db.execSQL("UPDATE workout_slots SET position = ? WHERE id = ?", arrayOf(position, id))
             }
         }
+    }
+}
+
+private val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `session_default_weight_snapshots` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sessionId` INTEGER NOT NULL, `exerciseId` INTEGER NOT NULL, `position` INTEGER NOT NULL, `weightKg` REAL, FOREIGN KEY(`sessionId`) REFERENCES `sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_session_default_weight_snapshots_sessionId` ON `session_default_weight_snapshots` (`sessionId`)",
+        )
     }
 }
 

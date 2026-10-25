@@ -99,6 +99,7 @@ data class BackupSession(
     val sets: List<BackupSessionSet> = emptyList(),
     val planSnapshots: List<BackupPlanSnapshot> = emptyList(),
     val rotationSnapshots: List<BackupRotationSnapshot> = emptyList(),
+    val defaultWeightSnapshots: List<BackupDefaultWeightSnapshot> = emptyList(),
 )
 
 @Serializable
@@ -111,6 +112,14 @@ data class BackupPlanSnapshot(
     val durationSec: Int? = null,
     val durationMin: Int? = null,
     val distanceKm: Double? = null,
+)
+
+@Serializable
+data class BackupDefaultWeightSnapshot(
+    val id: Long,
+    val exerciseId: Long,
+    val position: Int,
+    val weightKg: Double? = null,
 )
 
 @Serializable
@@ -249,6 +258,12 @@ object BackupCodec {
             for (snapshot in session.rotationSnapshots) {
                 if (snapshot.id <= 0 || snapshot.slotId <= 0 || snapshot.rotationIndex < 0) return false
                 if (!rotationSnapshotIds.add(snapshot.id)) return false
+            }
+            val defaultWeightIds = mutableSetOf<Long>()
+            for (snapshot in session.defaultWeightSnapshots) {
+                if (snapshot.id <= 0 || snapshot.exerciseId !in exerciseIds || snapshot.position < 0) return false
+                if (snapshot.weightKg != null && snapshot.weightKg < 0.0) return false
+                if (!defaultWeightIds.add(snapshot.id)) return false
             }
         }
         return true

@@ -18,67 +18,51 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
 
-class PlanAdjustmentTest {
+class PlanWeightTest {
     @Test
-    fun weightMovesHalfwayUp() {
-        val updated = PlanAdjustment.adjust(
+    fun exactWeightReplacement() {
+        val weight = PlanWeight.loggedWeight(
+            ExerciseType.STRENGTH,
             SetValues(reps = 8, weightKg = 50.0),
-            SetValues(reps = 8, weightKg = 60.0),
-            ExerciseType.STRENGTH,
+            SetValues(reps = 8, weightKg = 51.3),
         )
-        assertEquals(55.0, updated.weightKg!!, 0.0)
-        assertEquals(8, updated.reps)
+        assertEquals(51.3, weight!!, 0.0)
     }
 
     @Test
-    fun weightMovesHalfwayDown() {
-        val updated = PlanAdjustment.adjust(
-            SetValues(weightKg = 50.0),
-            SetValues(weightKg = 44.0),
-            ExerciseType.STRENGTH,
-        )
-        assertEquals(47.0, updated.weightKg!!, 0.0)
-    }
-
-    @Test
-    fun sameArithmeticForRepsSecondsMinutesAndDistance() {
-        assertEquals(
-            11,
-            PlanAdjustment.adjust(SetValues(reps = 10), SetValues(reps = 12), ExerciseType.BODYWEIGHT).reps,
-        )
-        assertEquals(
-            35,
-            PlanAdjustment.adjust(SetValues(durationSec = 30), SetValues(durationSec = 40), ExerciseType.TIMED).durationSec,
-        )
-        assertEquals(
-            25,
-            PlanAdjustment.adjust(SetValues(durationMin = 20), SetValues(durationMin = 30), ExerciseType.CARDIO).durationMin,
-        )
-        assertEquals(
-            1.1,
-            PlanAdjustment.adjust(SetValues(distanceKm = 1.0), SetValues(distanceKm = 1.2), ExerciseType.CARDIO).distanceKm!!,
-            0.0,
+    fun repsOnlyEditDoesNotRunTheOldFormula() {
+        val plan = SetValues(reps = 10, weightKg = 50.0)
+        val actual = SetValues(reps = 12, weightKg = 50.0)
+        assertEquals(50.0, PlanWeight.loggedWeight(ExerciseType.STRENGTH, plan, actual)!!, 0.0)
+        assertEquals(10, plan.reps)
+        assertNull(PlanWeight.loggedWeight(ExerciseType.BODYWEIGHT, plan, actual))
+        assertNull(PlanWeight.loggedWeight(ExerciseType.TIMED, SetValues(durationSec = 30), SetValues(durationSec = 45)))
+        assertNull(
+            PlanWeight.loggedWeight(
+                ExerciseType.CARDIO,
+                SetValues(durationMin = 20, distanceKm = 1.0),
+                SetValues(durationMin = 30, distanceKm = 1.4),
+            ),
         )
     }
 
     @Test
-    fun onlyTheCompletedSetChanges() {
-        val first = SetValues(weightKg = 50.0)
-        val second = SetValues(weightKg = 40.0)
-        val adjustedFirst = PlanAdjustment.adjust(first, SetValues(weightKg = 60.0), ExerciseType.STRENGTH)
-        assertEquals(55.0, adjustedFirst.weightKg!!, 0.0)
-        assertEquals(40.0, second.weightKg!!, 0.0)
+    fun asPlannedLeavesTheWeightUnchanged() {
+        val plan = SetValues(reps = 8, weightKg = 50.0)
+        assertNull(PlanWeight.loggedWeight(ExerciseType.STRENGTH, plan, plan.copy()))
     }
 
     @Test
-    fun missingPlanMetricStaysMissing() {
-        val updated = PlanAdjustment.adjust(
-            SetValues(distanceKm = null, durationMin = 20),
-            SetValues(distanceKm = 5.0, durationMin = 30),
-            ExerciseType.CARDIO,
+    fun lastLoggedWeightInTheSessionWins() {
+        val plan = SetValues(reps = 8, weightKg = 50.0)
+        val weights = PlanWeight.replacements(
+            listOf(
+                LoggedSet(1, ExerciseType.STRENGTH, plan, SetValues(reps = 8, weightKg = 60.0)),
+                LoggedSet(1, ExerciseType.STRENGTH, plan, plan),
+                LoggedSet(1, ExerciseType.STRENGTH, plan, SetValues(reps = 8, weightKg = 51.3)),
+            ),
         )
-        assertNull(updated.distanceKm)
-        assertEquals(25, updated.durationMin)
+        assertEquals(51.3, weights.getValue(1), 0.0)
     }
 }
 
@@ -295,10 +279,6 @@ class RepsStepTest {
         assertEquals(11, RepsStep.nudge(10, 1))
         assertEquals(9, RepsStep.nudge(10, -1))
         assertEquals(0, RepsStep.nudge(0, -1))
-        assertEquals(
-            11,
-            PlanAdjustment.adjust(SetValues(reps = 10), SetValues(reps = 12), ExerciseType.BODYWEIGHT).reps,
-        )
     }
 }
 

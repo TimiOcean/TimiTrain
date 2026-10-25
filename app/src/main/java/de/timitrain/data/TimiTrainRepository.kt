@@ -3,6 +3,7 @@ package de.timitrain.data
 import androidx.room.withTransaction
 import de.timitrain.data.backup.BackupAlternative
 import de.timitrain.data.backup.BackupDefaultSet
+import de.timitrain.data.backup.BackupDefaultWeightSnapshot
 import de.timitrain.data.backup.BackupDocument
 import de.timitrain.data.backup.BackupExercise
 import de.timitrain.data.backup.BackupPlanSnapshot
@@ -18,6 +19,7 @@ import de.timitrain.data.db.ExerciseDefaultSetEntity
 import de.timitrain.data.db.ExerciseEntity
 import de.timitrain.data.db.PlannedSetEntity
 import de.timitrain.data.db.SessionEntity
+import de.timitrain.data.db.SessionDefaultWeightSnapshotEntity
 import de.timitrain.data.db.SessionPlanSnapshotEntity
 import de.timitrain.data.db.SessionRotationSnapshotEntity
 import de.timitrain.data.db.SessionSetEntity
@@ -32,13 +34,15 @@ import de.timitrain.data.db.WorkoutGraph
 import de.timitrain.data.db.WorkoutSlotEntity
 import de.timitrain.domain.CategorizedSlot
 import de.timitrain.domain.DefaultSets
+import de.timitrain.domain.DefaultWeightTouch
 import de.timitrain.domain.ExerciseCategory
 import de.timitrain.domain.ExerciseType
 import de.timitrain.domain.WorkoutSections
 import de.timitrain.domain.defaultIncrements
 import de.timitrain.domain.Increments
 import de.timitrain.domain.InitialNumbers
-import de.timitrain.domain.PlanAdjustment
+import de.timitrain.domain.LoggedSet
+import de.timitrain.domain.PlanWeight
 import de.timitrain.domain.PlanTouch
 import de.timitrain.domain.Rotation
 import de.timitrain.domain.RotationTouch
@@ -398,10 +402,8 @@ class TimiTrainRepository(
                     distanceKm = completed.plan.distanceKm,
                 ),
             )
-            val planned = db.plannedSets().getAt(completed.alternativeId, completed.position) ?: continue
-            val adjusted = PlanAdjustment.adjust(completed.plan, completed.actual, completed.type)
-            db.plannedSets().update(planned.withValues(adjusted))
         }
+        applyLoggedWeights(sessionId, draft.completed)
         for (completed in draft.completed.distinctBy { it.slotId }) {
             db.sessions().insertRotationSnapshot(
                 SessionRotationSnapshotEntity(
@@ -423,9 +425,11 @@ class TimiTrainRepository(
         val session = db.sessions().get(sessionId) ?: return@withTransaction
         val plansBySession = db.sessions().allPlanSnapshots().groupBy { it.sessionId }
         val rotationsBySession = db.sessions().allRotationSnapshots().groupBy { it.sessionId }
+        val defaultsBySession = db.sessions().allDefaultWeightSnapshots().groupBy { it.sessionId }
         val deleted = session.toTouch(
             plansBySession[sessionId].orEmpty(),
             rotationsBySession[sessionId].orEmpty(),
+            defaultsBySession[sessionId].orEmpty(),
         )
         val others = db.sessions().listAll()
             .filter { it.id != sessionId }
@@ -433,12 +437,19 @@ class TimiTrainRepository(
                 other.toTouch(
                     plansBySession[other.id].orEmpty(),
                     rotationsBySession[other.id].orEmpty(),
+                    defaultsBySession[other.id].orEmpty(),
                 )
             }
         val rewind = SessionRewind.restore(deleted, others)
         for (plan in rewind.plans) {
             val row = db.plannedSets().getAt(plan.alternativeId, plan.setPosition) ?: continue
             db.plannedSets().update(row.withValues(plan.before))
+        }
+        for (weight in rewind.defaultWeights) {
+            val row = db.exercises().listDefaults(weight.exerciseId)
+                .firstOrNull { it.position == weight.position }
+                ?: continue
+            db.exercises().updateDefault(row.copy(weightKg = weight.before))
         }
         for (rotation in rewind.rotations) {
             if (db.slots().get(rotation.slotId) == null) continue
@@ -487,10 +498,12 @@ class TimiTrainRepository(
         val week = db.weekPlan().list().map { BackupWeekDay(it.weekday, it.workoutId) }
         val plansBySession = db.sessions().allPlanSnapshots().groupBy { it.sessionId }
         val rotationsBySession = db.sessions().allRotationSnapshots().groupBy { it.sessionId }
+        val defaultsBySession = db.sessions().allDefaultWeightSnapshots().groupBy { it.sessionId }
         val sessions = db.sessions().loadAllWithSets().map { row ->
             row.toBackup(
                 plansBySession[row.session.id].orEmpty(),
                 rotationsBySession[row.session.id].orEmpty(),
+                defaultsBySession[row.session.id].orEmpty(),
             )
         }
         return BackupDocument(
@@ -505,6 +518,7 @@ class TimiTrainRepository(
     suspend fun replaceAll(document: BackupDocument) = db.withTransaction {
         db.sessions().deleteAllPlanSnapshots()
         db.sessions().deleteAllRotationSnapshots()
+        db.sessions().deleteAllDefaultWeightSnapshots()
         db.sessions().deleteAllSets()
         db.sessions().deleteAll()
         db.workouts().deleteAll()
@@ -557,6 +571,62 @@ class TimiTrainRepository(
             }
             for (snapshot in session.rotationSnapshots) {
                 db.sessions().insertRotationSnapshot(snapshot.toEntity(session.id))
+            }
+            for (snapshot in session.defaultWeightSnapshots) {
+                db.sessions().insertDefaultWeightSnapshot(snapshot.toEntity(session.id))
+            }
+        }
+    }
+
+    /**
+     * Edited strength sets replace that exercise's plan weight with the logged
+     * kilograms. The last such set in the session wins. Repetitions stay as they
+     * were. As-planned sets and exercises without a weight are skipped.
+     */
+    private suspend fun applyLoggedWeights(sessionId: Long, completed: List<CompletedSetDraft>) {
+        val weights = PlanWeight.replacements(
+            completed.map { set ->
+                LoggedSet(
+                    exerciseId = set.exerciseId,
+                    type = set.type,
+                    plan = set.plan,
+                    actual = set.actual,
+                )
+            },
+        )
+        if (weights.isEmpty()) return
+        val snapshotted = db.sessions().planSnapshots(sessionId)
+            .map { it.alternativeId to it.position }
+            .toMutableSet()
+        for ((exerciseId, weight) in weights) {
+            for (row in db.plannedSets().listForExercise(exerciseId)) {
+                val key = row.alternativeId to row.position
+                if (snapshotted.add(key)) {
+                    db.sessions().insertPlanSnapshot(
+                        SessionPlanSnapshotEntity(
+                            sessionId = sessionId,
+                            alternativeId = row.alternativeId,
+                            position = row.position,
+                            reps = row.reps,
+                            weightKg = row.weightKg,
+                            durationSec = row.durationSec,
+                            durationMin = row.durationMin,
+                            distanceKm = row.distanceKm,
+                        ),
+                    )
+                }
+                db.plannedSets().update(row.copy(weightKg = weight))
+            }
+            for (row in db.exercises().listDefaults(exerciseId)) {
+                db.sessions().insertDefaultWeightSnapshot(
+                    SessionDefaultWeightSnapshotEntity(
+                        sessionId = sessionId,
+                        exerciseId = exerciseId,
+                        position = row.position,
+                        weightKg = row.weightKg,
+                    ),
+                )
+                db.exercises().updateDefault(row.copy(weightKg = weight))
             }
         }
     }
@@ -768,6 +838,7 @@ private fun BackupPlannedSet.toEntity(alternativeId: Long): PlannedSetEntity {
 private fun SessionWithSets.toBackup(
     plans: List<SessionPlanSnapshotEntity>,
     rotations: List<SessionRotationSnapshotEntity>,
+    defaultWeights: List<SessionDefaultWeightSnapshotEntity>,
 ): BackupSession {
     return BackupSession(
         id = session.id,
@@ -811,12 +882,21 @@ private fun SessionWithSets.toBackup(
                 rotationIndex = snapshot.rotationIndex,
             )
         },
+        defaultWeightSnapshots = defaultWeights.sortedBy { it.id }.map { snapshot ->
+            BackupDefaultWeightSnapshot(
+                id = snapshot.id,
+                exerciseId = snapshot.exerciseId,
+                position = snapshot.position,
+                weightKg = snapshot.weightKg,
+            )
+        },
     )
 }
 
 private fun SessionEntity.toTouch(
     plans: List<SessionPlanSnapshotEntity>,
     rotations: List<SessionRotationSnapshotEntity>,
+    defaultWeights: List<SessionDefaultWeightSnapshotEntity> = emptyList(),
 ): SessionTouch {
     return SessionTouch(
         sessionId = id,
@@ -830,6 +910,13 @@ private fun SessionEntity.toTouch(
         },
         rotations = rotations.distinctBy { it.slotId }.map { snapshot ->
             RotationTouch(slotId = snapshot.slotId, beforeIndex = snapshot.rotationIndex)
+        },
+        defaultWeights = defaultWeights.map { snapshot ->
+            DefaultWeightTouch(
+                exerciseId = snapshot.exerciseId,
+                position = snapshot.position,
+                before = snapshot.weightKg,
+            )
         },
     )
 }
@@ -871,6 +958,16 @@ private fun BackupPlanSnapshot.toEntity(sessionId: Long): SessionPlanSnapshotEnt
         durationSec = durationSec,
         durationMin = durationMin,
         distanceKm = distanceKm,
+    )
+}
+
+private fun BackupDefaultWeightSnapshot.toEntity(sessionId: Long): SessionDefaultWeightSnapshotEntity {
+    return SessionDefaultWeightSnapshotEntity(
+        id = id,
+        sessionId = sessionId,
+        exerciseId = exerciseId,
+        position = position,
+        weightKg = weightKg,
     )
 }
 
