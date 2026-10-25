@@ -201,12 +201,14 @@ fun TimiTrainNav() {
                 SessionRoute(
                     workoutId = id,
                     makesUpForDate = makeup,
+                    savedStateHandle = entry.savedStateHandle,
                     onFinished = {
                         nav.popBackStack(Routes.TRAIN, inclusive = false)
                     },
                     onEditExercise = { exerciseId, alternativeId ->
                         nav.navigate(Routes.exerciseEdit(exerciseId, alternativeId))
                     },
+                    onCreateExercise = { nav.navigate(Routes.EXERCISE_NEW) },
                 )
             }
             composable(Routes.DAY) { entry ->

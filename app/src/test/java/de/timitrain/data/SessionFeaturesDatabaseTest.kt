@@ -86,6 +86,33 @@ class SessionFeaturesDatabaseTest {
     }
 
     @Test
+    fun addingAnAlternativeKeepsTheOfferedIndexAndCopiesDefaults() = runBlocking {
+        val db = TimiTrainDatabase.createInMemory(RuntimeEnvironment.getApplication())
+        val repository = TimiTrainRepository(db)
+        val first = repository.createExercise(
+            "Plank",
+            ExerciseType.TIMED,
+            Increments(durationSec = 5),
+            listOf(SetValues(durationSec = 20)),
+        )
+        val second = repository.createExercise(
+            "Seitstütz",
+            ExerciseType.TIMED,
+            Increments(durationSec = 5),
+            listOf(SetValues(durationSec = 30)),
+        )
+        val workoutId = repository.createWorkout("Core")
+        repository.addSlot(workoutId, first)
+        val slotId = repository.loadWorkout(workoutId)!!.slots.single().slot.id
+        repository.addAlternative(slotId, second)
+        val slot = repository.loadWorkout(workoutId)!!.slots.single()
+        assertEquals(0, slot.slot.rotationIndex)
+        assertEquals(listOf("Plank", "Seitstütz"), slot.alternatives.map { it.exercise.name })
+        assertEquals(listOf(30), slot.alternatives[1].sets.map { it.durationSec })
+        db.close()
+    }
+
+    @Test
     fun saveAdvancesFromTheAlternativeThatWasPerformed() = runBlocking {
         val db = TimiTrainDatabase.createInMemory(RuntimeEnvironment.getApplication())
         val repository = TimiTrainRepository(db)

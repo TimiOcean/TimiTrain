@@ -46,6 +46,7 @@
     <string name="name">Name</string>
     <string name="add_slot">Slot hinzufügen</string>
     <string name="add_alternative">Alternative hinzufügen</string>
+    <string name="create_alternative">Alternative anlegen</string>
     <string name="add_set">Satz hinzufügen</string>
     <string name="remove_slot">Slot entfernen</string>
     <string name="remove_alternative">Alternative entfernen</string>

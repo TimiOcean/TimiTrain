@@ -74,6 +74,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewModelScope
@@ -84,6 +85,7 @@ import de.timitrain.data.CompletedSetDraft
 import de.timitrain.data.SessionDraft
 import de.timitrain.data.ExercisePhotos
 import de.timitrain.data.TimiTrainRepository
+import de.timitrain.data.db.ExerciseEntity
 import de.timitrain.data.db.WorkoutEntity
 import de.timitrain.data.db.WorkoutGraph
 import de.timitrain.data.sortedGraph
@@ -119,6 +121,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -378,14 +381,18 @@ data class SessionUi(
     val countdownPhase: CountdownPhase? = null,
     val countdownTotal: Int = 0,
     val photoOpen: Boolean = false,
+    val pickerOpen: Boolean = false,
+    val pickerExercises: List<ExerciseEntity> = emptyList(),
 )
 
 @Composable
 fun SessionRoute(
     workoutId: Long?,
     makesUpForDate: LocalDate? = null,
+    savedStateHandle: SavedStateHandle? = null,
     onFinished: () -> Unit,
     onEditExercise: (Long, Long) -> Unit = { _, _ -> },
+    onCreateExercise: () -> Unit = {},
 ) {
     val app = rememberApp()
     if (workoutId == null) {
@@ -414,6 +421,15 @@ fun SessionRoute(
         view.keepScreenOn = true
         onDispose { view.keepScreenOn = false }
     }
+    LaunchedEffect(savedStateHandle, vm) {
+        val handle = savedStateHandle ?: return@LaunchedEffect
+        handle.getStateFlow("createdExerciseId", 0L).collect { id ->
+            if (id != 0L) {
+                vm.onExerciseCreated(id)
+                handle["createdExerciseId"] = 0L
+            }
+        }
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, vm) {
         val observer = LifecycleEventObserver { _, event ->
@@ -426,7 +442,16 @@ fun SessionRoute(
         if (state.photoOpen) vm.closePhoto()
         else if (state.completed.isEmpty()) onFinished() else vm.requestDiscard()
     }
-    SessionScreen(state = state, vm = vm, onLeave = onFinished, onEditExercise = onEditExercise)
+    SessionScreen(
+        state = state,
+        vm = vm,
+        onLeave = onFinished,
+        onEditExercise = onEditExercise,
+        onCreateExercise = {
+            vm.prepareCreateExercise()
+            onCreateExercise()
+        },
+    )
 }
 
 class SessionViewModel(
@@ -447,6 +472,9 @@ class SessionViewModel(
     private var countdownJob: Job? = null
     private var workoutGraph: WorkoutGraph? = null
     private var ready = false
+    private var pendingAlternativeSlotId: Long? = null
+    private var pickerWanted = false
+    private var reloadGeneration = 0
 
     init {
         viewModelScope.launch {
@@ -483,13 +511,58 @@ class SessionViewModel(
         if (!ready) return
         val current = _state.value
         if (current.loading || current.blocked || current.missing || current.saved) return
+        viewModelScope.launch { reloadKeepingChoice(current, keepCountdown = true) }
+    }
+
+    fun openAlternativePicker() {
+        val step = _state.value.steps.getOrNull(_state.value.index) ?: return
+        pendingAlternativeSlotId = step.slotId
+        pickerWanted = true
         viewModelScope.launch {
-            val fresh = repository.loadWorkout(workoutId)?.sortedGraph() ?: return@launch
-            workoutGraph = fresh
-            val chosen = current.steps.groupBy { it.slotId }.mapValues { it.value.first().alternativeIndex }
-            val newSteps = buildSteps(fresh, chosen)
-            _state.value = rebase(current, newSteps, focusSlot = null, focusSet = null, keepCountdown = true)
+            val exercises = repository.observeExercises().first()
+            if (!pickerWanted || pendingAlternativeSlotId != step.slotId) return@launch
+            _state.value = _state.value.copy(pickerOpen = true, pickerExercises = exercises)
         }
+    }
+
+    fun dismissAlternativePicker() {
+        pickerWanted = false
+        pendingAlternativeSlotId = null
+        _state.value = _state.value.copy(pickerOpen = false)
+    }
+
+    /** Keep the slot so a newly created exercise can be attached when the editor returns. */
+    fun prepareCreateExercise() {
+        pickerWanted = false
+        _state.value = _state.value.copy(pickerOpen = false)
+    }
+
+    fun onExerciseCreated(exerciseId: Long) {
+        if (pendingAlternativeSlotId == null) return
+        pickAlternative(exerciseId)
+    }
+
+    fun pickAlternative(exerciseId: Long) {
+        val slotId = pendingAlternativeSlotId ?: return
+        pickerWanted = false
+        pendingAlternativeSlotId = null
+        _state.value = _state.value.copy(pickerOpen = false)
+        viewModelScope.launch {
+            repository.addAlternative(slotId, exerciseId)
+            reloadKeepingChoice(_state.value, keepCountdown = true)
+        }
+    }
+
+    private suspend fun reloadKeepingChoice(current: SessionUi, keepCountdown: Boolean) {
+        val generation = ++reloadGeneration
+        val fresh = repository.loadWorkout(workoutId)?.sortedGraph() ?: return
+        if (generation != reloadGeneration) return
+        workoutGraph = fresh
+        val chosen = current.steps.groupBy { it.slotId }.mapValues { it.value.first().alternativeIndex }
+        val newSteps = buildSteps(fresh, chosen)
+        if (generation != reloadGeneration) return
+        _state.value = rebase(current, newSteps, focusSlot = null, focusSet = null, keepCountdown = keepCountdown)
+            .copy(pickerOpen = false)
     }
 
     fun switchAlternative(delta: Int) {
@@ -864,6 +937,7 @@ private fun SessionScreen(
     vm: SessionViewModel,
     onLeave: () -> Unit,
     onEditExercise: (Long, Long) -> Unit,
+    onCreateExercise: () -> Unit,
 ) {
     val step = state.steps.getOrNull(state.index)
     val sessionOpen = !state.loading && !state.blocked && !state.missing
@@ -917,6 +991,13 @@ private fun SessionScreen(
                                     onClick = {
                                         menuOpen = false
                                         onEditExercise(step.exerciseId, step.alternativeId)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.create_alternative)) },
+                                    onClick = {
+                                        menuOpen = false
+                                        vm.openAlternativePicker()
                                     },
                                 )
                             }
@@ -1091,6 +1172,29 @@ private fun SessionScreen(
         val name = step?.photoFile
         if (name != null) PhotoOverlay(name = name, onClose = vm::closePhoto)
     }
+    }
+    if (state.pickerOpen) {
+        AlertDialog(
+            onDismissRequest = vm::dismissAlternativePicker,
+            title = { Text(stringResource(R.string.pick_exercise)) },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    if (state.pickerExercises.isEmpty()) Text(stringResource(R.string.no_exercises))
+                    state.pickerExercises.forEach { exercise ->
+                        TextButton(onClick = { vm.pickAlternative(exercise.id) }) {
+                            Text(exercise.name)
+                            val category = exercise.category.toExerciseCategory()
+                            Text(categoryLabel(category), color = category.markColor())
+                        }
+                    }
+                    TextButton(onClick = onCreateExercise) { Text(stringResource(R.string.new_exercise)) }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = vm::dismissAlternativePicker) { Text(stringResource(R.string.cancel)) }
+            },
+        )
     }
     if (state.askDiscard) {
         AlertDialog(
