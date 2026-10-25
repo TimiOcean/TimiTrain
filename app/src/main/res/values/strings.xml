@@ -68,6 +68,17 @@
     <string name="pick_exercise">Übung wählen</string>
     <string name="edit_increments">Schrittweiten</string>
     <string name="edit_exercise">Übung bearbeiten</string>
+    <string name="note">Notiz</string>
+    <string name="photo">Foto</string>
+    <string name="photo_gallery">Galerie</string>
+    <string name="photo_camera">Kamera</string>
+    <string name="photo_remove">Foto entfernen</string>
+    <string name="photo_show">Foto anzeigen</string>
+    <string name="close">Schließen</string>
+    <string name="per_side">pro Seite</string>
+    <string name="play">Start</string>
+    <string name="side_left">Links</string>
+    <string name="side_right">Rechts</string>
     <string name="default_sets">Standardsätze</string>
     <string name="no_default_sets">Noch keine Standardsätze.</string>
     <string name="increments_fixed_name">Der Name bleibt, wie er angelegt wurde.</string>

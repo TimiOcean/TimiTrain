@@ -210,6 +210,46 @@ object Rotation {
     fun afterSave(index: Int, count: Int, completedSetInSlot: Boolean): Int {
         return if (completedSetInSlot) advance(index, count) else normalize(index, count)
     }
+
+    /** Next session offers the alternative after the one that was actually performed. */
+    fun afterPerformed(performedIndex: Int, count: Int): Int = advance(performedIndex, count)
+}
+
+/** Swipe changes the visible alternative only before that slot’s first set has started. */
+object AlternativeSwitch {
+    fun allowed(
+        alternativeCount: Int,
+        slotHasCompletedSet: Boolean,
+        countdownStarted: Boolean,
+        adjusting: Boolean,
+    ): Boolean {
+        return alternativeCount >= 2 && !slotHasCompletedSet && !countdownStarted && !adjusting
+    }
+}
+
+enum class CountdownPhase {
+    LEFT,
+    RIGHT,
+    SINGLE,
+    DONE,
+}
+
+/**
+ * A timed set never counts down during rest. The first set waits for Play.
+ * Later sets start on their own once rest has finished.
+ */
+object TimedFlow {
+    fun autoStarts(setNumber: Int, resting: Boolean): Boolean = setNumber > 1 && !resting
+
+    fun showPlay(timed: Boolean, started: Boolean, resting: Boolean): Boolean {
+        if (resting) return true
+        return timed && !started
+    }
+
+    fun showChecks(timed: Boolean, started: Boolean, finished: Boolean, resting: Boolean): Boolean {
+        if (!timed) return true
+        return started || finished
+    }
 }
 
 data class SessionFact(

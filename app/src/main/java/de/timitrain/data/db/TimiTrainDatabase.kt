@@ -29,7 +29,7 @@ import de.timitrain.domain.toExerciseCategoryOrNull
         SessionDefaultWeightSnapshotEntity::class,
         SettingsEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = false,
 )
 abstract class TimiTrainDatabase : RoomDatabase() {
@@ -55,6 +55,7 @@ abstract class TimiTrainDatabase : RoomDatabase() {
                 MIGRATION_4_5,
                 MIGRATION_5_6,
                 MIGRATION_6_7,
+                MIGRATION_7_8,
             ).build()
         }
 
@@ -159,6 +160,14 @@ private val MIGRATION_4_5 = object : Migration(4, 5) {
                 db.execSQL("UPDATE workout_slots SET position = ? WHERE id = ?", arrayOf(position, id))
             }
         }
+    }
+}
+
+private val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE exercises ADD COLUMN note TEXT")
+        db.execSQL("ALTER TABLE exercises ADD COLUMN photoFile TEXT")
+        db.execSQL("ALTER TABLE exercises ADD COLUMN perSide INTEGER NOT NULL DEFAULT 0")
     }
 }
 

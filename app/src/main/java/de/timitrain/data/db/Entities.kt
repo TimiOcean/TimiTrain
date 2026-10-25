@@ -17,6 +17,9 @@ data class ExerciseEntity(
     val durationIncrementSec: Int? = null,
     val distanceIncrementKm: Double? = null,
     val durationIncrementMin: Int? = null,
+    val note: String? = null,
+    val photoFile: String? = null,
+    @ColumnInfo(defaultValue = "0") val perSide: Boolean = false,
 )
 
 @Entity(

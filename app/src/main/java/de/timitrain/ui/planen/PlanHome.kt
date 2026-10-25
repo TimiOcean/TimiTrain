@@ -19,6 +19,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -41,7 +42,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -49,6 +52,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import de.timitrain.R
+import de.timitrain.data.ExercisePhotos
 import de.timitrain.data.db.ExerciseEntity
 import de.timitrain.data.db.WeekDayRow
 import de.timitrain.data.db.WorkoutEntity
@@ -430,6 +434,9 @@ fun ExerciseCreateRoute(onBack: () -> Unit, onCreated: (Long) -> Unit) {
     var type by remember { mutableStateOf(ExerciseType.STRENGTH) }
     var increments by remember { mutableStateOf(defaultIncrements(ExerciseType.STRENGTH)) }
     var sets by remember { mutableStateOf(listOf<SetValues>()) }
+    var note by remember { mutableStateOf("") }
+    var photo by remember { mutableStateOf<String?>(null) }
+    var perSide by remember { mutableStateOf(false) }
     var setDialog by remember { mutableStateOf<DefaultSetDialogState?>(null) }
     Scaffold(
         topBar = {
@@ -473,13 +480,18 @@ fun ExerciseCreateRoute(onBack: () -> Unit, onCreated: (Long) -> Unit) {
                             type = candidate
                             increments = defaultIncrements(candidate)
                             sets = emptyList()
+                            if (candidate != ExerciseType.TIMED) perSide = false
                             setDialog = null
                         },
                         label = { Text(exerciseTypeLabel(candidate)) },
                     )
                 }
             }
+            if (type == ExerciseType.TIMED) {
+                PerSideCheck(checked = perSide, onChecked = { perSide = it })
+            }
             IncrementFields(type = type, increments = increments, onChange = { increments = it })
+            ExerciseNoteAndPhoto(note = note, photoName = photo, onNote = { note = it }, onPhoto = { photo = it })
             DefaultSetList(
                 type = type,
                 sets = sets,
@@ -488,7 +500,7 @@ fun ExerciseCreateRoute(onBack: () -> Unit, onCreated: (Long) -> Unit) {
             )
             error?.let { Text(problemText(it), color = MaterialTheme.colorScheme.error) }
             OutlinedButton(
-                onClick = { vm.save(name, category, type, increments, sets, onCreated) },
+                onClick = { vm.save(name, category, type, increments, sets, note, photo, perSide, onCreated) },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(stringResource(R.string.save)) }
         }
@@ -537,6 +549,9 @@ class ExerciseCreateViewModel(
         type: ExerciseType,
         increments: Increments,
         defaultSets: List<SetValues>,
+        note: String,
+        photoFile: String?,
+        perSide: Boolean,
         onDone: (Long) -> Unit,
     ) {
         if (name.isBlank()) {
@@ -549,7 +564,16 @@ class ExerciseCreateViewModel(
             return
         }
         viewModelScope.launch {
-            val id = repository.createExercise(name, type, increments, defaultSets, category)
+            val id = repository.createExercise(
+                name,
+                type,
+                increments,
+                defaultSets,
+                category,
+                note,
+                photoFile,
+                perSide,
+            )
             onDone(id)
         }
     }
@@ -557,15 +581,18 @@ class ExerciseCreateViewModel(
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun ExerciseEditRoute(exerciseId: Long?, onBack: () -> Unit) {
+fun ExerciseEditRoute(exerciseId: Long?, alternativeId: Long = -1L, onBack: () -> Unit) {
     val app = rememberApp()
+    val context = LocalContext.current.applicationContext
     if (exerciseId == null) {
         onBack()
         return
     }
     val vm: ExerciseEditViewModel = viewModel(
-        key = "exercise-$exerciseId",
-        factory = viewModelFactory { ExerciseEditViewModel(app.repository, exerciseId) },
+        key = "exercise-$exerciseId-$alternativeId",
+        factory = viewModelFactory {
+            ExerciseEditViewModel(app.repository, exerciseId, alternativeId, context)
+        },
     )
     val form by vm.form.collectAsState()
     val error by vm.error.collectAsState()
@@ -573,6 +600,9 @@ fun ExerciseEditRoute(exerciseId: Long?, onBack: () -> Unit) {
     var category by remember { mutableStateOf(ExerciseCategory.STRENGTH) }
     var increments by remember { mutableStateOf(Increments()) }
     var sets by remember { mutableStateOf(listOf<SetValues>()) }
+    var note by remember { mutableStateOf("") }
+    var photo by remember { mutableStateOf<String?>(null) }
+    var perSide by remember { mutableStateOf(false) }
     var ready by remember { mutableStateOf(false) }
     var setDialog by remember { mutableStateOf<DefaultSetDialogState?>(null) }
     LaunchedEffect(current) {
@@ -581,6 +611,9 @@ fun ExerciseEditRoute(exerciseId: Long?, onBack: () -> Unit) {
             category = loaded.category
             increments = loaded.increments
             sets = loaded.sets
+            note = loaded.note.orEmpty()
+            photo = loaded.photoFile
+            perSide = loaded.perSide
             ready = true
         }
     }
@@ -617,7 +650,11 @@ fun ExerciseEditRoute(exerciseId: Long?, onBack: () -> Unit) {
                         )
                     }
                 }
+                if (type == ExerciseType.TIMED) {
+                    PerSideCheck(checked = perSide, onChecked = { perSide = it })
+                }
                 IncrementFields(type = type, increments = increments, onChange = { increments = it })
+                ExerciseNoteAndPhoto(note = note, photoName = photo, onNote = { note = it }, onPhoto = { photo = it })
                 DefaultSetList(
                     type = type,
                     sets = sets,
@@ -626,7 +663,7 @@ fun ExerciseEditRoute(exerciseId: Long?, onBack: () -> Unit) {
                 )
                 error?.let { Text(problemText(it), color = MaterialTheme.colorScheme.error) }
                 OutlinedButton(
-                    onClick = { vm.save(type, category, increments, sets, onBack) },
+                    onClick = { vm.save(type, category, increments, sets, note, photo, perSide, onBack) },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(stringResource(R.string.save)) }
             }
@@ -673,11 +710,16 @@ data class ExerciseForm(
     val category: ExerciseCategory,
     val increments: Increments,
     val sets: List<SetValues>,
+    val note: String? = null,
+    val photoFile: String? = null,
+    val perSide: Boolean = false,
 )
 
 class ExerciseEditViewModel(
     private val repository: de.timitrain.data.TimiTrainRepository,
     private val exerciseId: Long,
+    private val alternativeId: Long,
+    private val context: android.content.Context,
 ) : ViewModel() {
     private val _form = kotlinx.coroutines.flow.MutableStateFlow<ExerciseForm?>(null)
     val form: StateFlow<ExerciseForm?> = _form
@@ -697,7 +739,14 @@ class ExerciseEditViewModel(
                     distanceKm = exercise.distanceIncrementKm,
                     durationMin = exercise.durationIncrementMin,
                 ),
-                sets = repository.defaultSets(exerciseId),
+                sets = if (alternativeId >= 0) {
+                    repository.plannedValues(alternativeId)
+                } else {
+                    repository.defaultSets(exerciseId)
+                },
+                note = exercise.note,
+                photoFile = exercise.photoFile,
+                perSide = exercise.perSide,
             )
         }
     }
@@ -707,6 +756,9 @@ class ExerciseEditViewModel(
         category: ExerciseCategory,
         increments: Increments,
         defaultSets: List<SetValues>,
+        note: String,
+        photoFile: String?,
+        perSide: Boolean,
         onDone: () -> Unit,
     ) {
         val problem = validateIncrements(type, increments)
@@ -715,9 +767,32 @@ class ExerciseEditViewModel(
             return
         }
         viewModelScope.launch {
-            repository.updateExercise(exerciseId, increments, defaultSets, category)
+            val previousPhoto = repository.exercise(exerciseId)?.photoFile
+            repository.updateExercise(
+                exerciseId,
+                increments,
+                defaultSets,
+                category,
+                note,
+                photoFile,
+                perSide,
+            )
+            if (alternativeId >= 0) {
+                repository.replaceAlternativeSets(alternativeId, defaultSets)
+            }
+            if (previousPhoto != null && previousPhoto != photoFile) {
+                ExercisePhotos.delete(context, previousPhoto)
+            }
             onDone()
         }
+    }
+}
+
+@Composable
+private fun PerSideCheck(checked: Boolean, onChecked: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = checked, onCheckedChange = onChecked)
+        Text(stringResource(R.string.per_side))
     }
 }
 

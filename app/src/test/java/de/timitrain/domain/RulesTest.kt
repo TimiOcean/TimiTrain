@@ -88,6 +88,46 @@ class RotationTest {
     fun removingCurrentAlternativeKeepsIndexInRange() {
         assertEquals(1, Rotation.normalize(1, 2))
     }
+
+    @Test
+    fun nextOfferFollowsTheAlternativeThatWasPerformed() {
+        assertEquals(1, Rotation.afterPerformed(0, 3))
+        assertEquals(2, Rotation.afterPerformed(1, 3))
+        assertEquals(0, Rotation.afterPerformed(2, 3))
+    }
+}
+
+class TimedFlowTest {
+    @Test
+    fun firstTimedSetWaitsAndLaterSetsStartAfterRest() {
+        assertEquals(false, TimedFlow.autoStarts(setNumber = 1, resting = false))
+        assertEquals(false, TimedFlow.autoStarts(setNumber = 1, resting = true))
+        assertEquals(false, TimedFlow.autoStarts(setNumber = 2, resting = true))
+        assertEquals(true, TimedFlow.autoStarts(setNumber = 2, resting = false))
+    }
+
+    @Test
+    fun playReplacesChecksUntilATimedSetHasStarted() {
+        assertEquals(true, TimedFlow.showPlay(timed = true, started = false, resting = false))
+        assertEquals(false, TimedFlow.showPlay(timed = true, started = true, resting = false))
+        assertEquals(true, TimedFlow.showPlay(timed = false, started = false, resting = true))
+        assertEquals(false, TimedFlow.showPlay(timed = false, started = false, resting = false))
+        assertEquals(false, TimedFlow.showChecks(timed = true, started = false, finished = false, resting = false))
+        assertEquals(true, TimedFlow.showChecks(timed = true, started = true, finished = false, resting = false))
+        assertEquals(true, TimedFlow.showChecks(timed = true, started = true, finished = true, resting = false))
+        assertEquals(true, TimedFlow.showChecks(timed = false, started = false, finished = false, resting = true))
+    }
+}
+
+class AlternativeSwitchTest {
+    @Test
+    fun swipeIsOnlyAllowedBeforeTheSlotStarts() {
+        assertEquals(true, AlternativeSwitch.allowed(2, slotHasCompletedSet = false, countdownStarted = false, adjusting = false))
+        assertEquals(false, AlternativeSwitch.allowed(1, slotHasCompletedSet = false, countdownStarted = false, adjusting = false))
+        assertEquals(false, AlternativeSwitch.allowed(2, slotHasCompletedSet = true, countdownStarted = false, adjusting = false))
+        assertEquals(false, AlternativeSwitch.allowed(2, slotHasCompletedSet = false, countdownStarted = true, adjusting = false))
+        assertEquals(false, AlternativeSwitch.allowed(2, slotHasCompletedSet = false, countdownStarted = false, adjusting = true))
+    }
 }
 
 class StepperTest {

@@ -1,15 +1,16 @@
 package de.timitrain.ui.train
 
 import android.database.sqlite.SQLiteConstraintException
+import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,13 +19,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.SportsScore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -46,32 +54,46 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import de.timitrain.R
 import de.timitrain.data.CompletedSetDraft
 import de.timitrain.data.SessionDraft
+import de.timitrain.data.ExercisePhotos
 import de.timitrain.data.TimiTrainRepository
 import de.timitrain.data.db.WorkoutEntity
+import de.timitrain.data.db.WorkoutGraph
 import de.timitrain.data.sortedGraph
 import de.timitrain.data.toValues
+import de.timitrain.domain.AlternativeSwitch
 import de.timitrain.domain.AppClock
+import de.timitrain.domain.CountdownPhase
 import de.timitrain.domain.ExerciseCategory
 import de.timitrain.domain.ExerciseType
+import de.timitrain.domain.TimedFlow
 import de.timitrain.domain.countdownSeconds
 import de.timitrain.domain.RepsStep
 import de.timitrain.domain.GermanNumbers
@@ -121,6 +143,11 @@ data class SessionStep(
     val setCount: Int,
     val plan: SetValues,
     val rotationIndex: Int,
+    val alternativeIndex: Int,
+    val alternativeCount: Int,
+    val note: String? = null,
+    val photoFile: String? = null,
+    val perSide: Boolean = false,
     val lastTime: SetValues?,
     val increments: Increments,
     val restSecondsOverride: Int?,
@@ -347,10 +374,19 @@ data class SessionUi(
     val saved: Boolean = false,
     val failed: Boolean = false,
     val adjusting: Boolean = false,
+    val countdownEndsAt: Long? = null,
+    val countdownPhase: CountdownPhase? = null,
+    val countdownTotal: Int = 0,
+    val photoOpen: Boolean = false,
 )
 
 @Composable
-fun SessionRoute(workoutId: Long?, makesUpForDate: LocalDate? = null, onFinished: () -> Unit) {
+fun SessionRoute(
+    workoutId: Long?,
+    makesUpForDate: LocalDate? = null,
+    onFinished: () -> Unit,
+    onEditExercise: (Long, Long) -> Unit = { _, _ -> },
+) {
     val app = rememberApp()
     if (workoutId == null) {
         onFinished()
@@ -378,10 +414,19 @@ fun SessionRoute(workoutId: Long?, makesUpForDate: LocalDate? = null, onFinished
         view.keepScreenOn = true
         onDispose { view.keepScreenOn = false }
     }
-    BackHandler {
-        if (state.completed.isEmpty()) onFinished() else vm.requestDiscard()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, vm) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) vm.onResume()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    SessionScreen(state = state, vm = vm, onLeave = onFinished)
+    BackHandler {
+        if (state.photoOpen) vm.closePhoto()
+        else if (state.completed.isEmpty()) onFinished() else vm.requestDiscard()
+    }
+    SessionScreen(state = state, vm = vm, onLeave = onFinished, onEditExercise = onEditExercise)
 }
 
 class SessionViewModel(
@@ -399,6 +444,9 @@ class SessionViewModel(
     private var date: LocalDate = clock.today()
     private var workoutName = ""
     private var chimeJob: Job? = null
+    private var countdownJob: Job? = null
+    private var workoutGraph: WorkoutGraph? = null
+    private var ready = false
 
     init {
         viewModelScope.launch {
@@ -407,54 +455,86 @@ class SessionViewModel(
             date = clock.today()
             if (repository.sessionOn(date) != null) {
                 _state.value = SessionUi(loading = false, blocked = true)
+                ready = true
                 return@launch
             }
             val graph = repository.loadWorkout(workoutId)?.sortedGraph()
             if (graph == null) {
                 _state.value = SessionUi(loading = false, missing = true)
+                ready = true
                 return@launch
             }
             defaultRest = repository.restSeconds()
             startedAt = clock.instant().toEpochMilli()
             workoutName = graph.workout.name
-            val steps = mutableListOf<SessionStep>()
-            for (slot in graph.slots) {
-                if (slot.alternatives.isEmpty()) continue
-                val rotationIndex = slot.slot.rotationIndex
-                val due = slot.alternatives[Rotation.normalize(rotationIndex, slot.alternatives.size)]
-                val sets = due.sets
-                sets.forEachIndexed { index, set ->
-                    val exercise = due.exercise
-                    steps += SessionStep(
-                        slotId = slot.slot.id,
-                        alternativeId = due.alternative.id,
-                        exerciseId = exercise.id,
-                        exerciseName = exercise.name,
-                        type = exercise.type.toExerciseType(),
-                        category = exercise.category.toExerciseCategory(),
-                        setPosition = set.position,
-                        setNumber = index + 1,
-                        setCount = sets.size,
-                        plan = set.toValues(),
-                        rotationIndex = rotationIndex,
-                        lastTime = repository.lastValues(exercise.id, set.position),
-                        increments = Increments(
-                            weightKg = exercise.weightIncrementKg,
-                            durationSec = exercise.durationIncrementSec,
-                            distanceKm = exercise.distanceIncrementKm,
-                            durationMin = exercise.durationIncrementMin,
-                        ),
-                        restSecondsOverride = due.alternative.restSecondsOverride,
-                    )
-                }
-            }
+            workoutGraph = graph
+            val steps = buildSteps(graph, emptyMap())
             _state.value = SessionUi(
                 loading = false,
                 workoutName = workoutName,
                 steps = steps,
                 actuals = steps.map { it.plan },
             )
+            ready = true
         }
+    }
+
+    fun onResume() {
+        if (!ready) return
+        val current = _state.value
+        if (current.loading || current.blocked || current.missing || current.saved) return
+        viewModelScope.launch {
+            val fresh = repository.loadWorkout(workoutId)?.sortedGraph() ?: return@launch
+            workoutGraph = fresh
+            val chosen = current.steps.groupBy { it.slotId }.mapValues { it.value.first().alternativeIndex }
+            val newSteps = buildSteps(fresh, chosen)
+            _state.value = rebase(current, newSteps, focusSlot = null, focusSet = null, keepCountdown = true)
+        }
+    }
+
+    fun switchAlternative(delta: Int) {
+        val current = _state.value
+        val step = current.steps.getOrNull(current.index) ?: return
+        if (!current.canSwitchAlternative()) return
+        val graph = workoutGraph ?: return
+        val next = Rotation.normalize(step.alternativeIndex + delta, step.alternativeCount)
+        if (next == step.alternativeIndex) return
+        val chosen = current.steps.groupBy { it.slotId }.mapValues { it.value.first().alternativeIndex }.toMutableMap()
+        chosen[step.slotId] = next
+        viewModelScope.launch {
+            val newSteps = buildSteps(graph, chosen)
+            _state.value = rebase(
+                _state.value,
+                newSteps,
+                focusSlot = step.slotId,
+                focusSet = 1,
+                keepCountdown = false,
+            )
+        }
+    }
+
+    fun openPhoto() {
+        val step = _state.value.steps.getOrNull(_state.value.index) ?: return
+        if (step.photoFile == null) return
+        _state.value = _state.value.copy(photoOpen = true)
+    }
+
+    fun closePhoto() {
+        _state.value = _state.value.copy(photoOpen = false)
+    }
+
+    /** Skip a running rest without its chime. A timed set that has not started begins now. */
+    fun play() {
+        val current = _state.value
+        val step = current.steps.getOrNull(current.index) ?: return
+        if (current.index in current.completed) return
+        val resting = restingNow(current)
+        val timedWaiting = step.type == ExerciseType.TIMED && current.countdownPhase == null
+        if (!resting && !timedWaiting) return
+        chimeJob?.cancel()
+        scheduler.cancel()
+        _state.value = current.copy(restEndsAt = null)
+        if (timedWaiting) startCountdown(step)
     }
 
     internal fun nudge(metric: Metric, delta: Int) {
@@ -521,11 +601,16 @@ class SessionViewModel(
         val actuals = current.actuals.toMutableList()
         if (usePlan) actuals[index] = step.plan
         val completed = current.completed + index
+        countdownJob?.cancel()
         _state.value = current.copy(
             actuals = actuals,
             completed = completed,
             index = index + 1,
             adjusting = false,
+            countdownEndsAt = null,
+            countdownPhase = null,
+            countdownTotal = 0,
+            photoOpen = false,
         )
         armRest(step.restSecondsOverride ?: defaultRest)
     }
@@ -561,6 +646,7 @@ class SessionViewModel(
                         plan = step.plan,
                         actual = current.actuals[index],
                         rotationIndex = step.rotationIndex,
+                        alternativeIndex = step.alternativeIndex,
                     )
                 },
             )
@@ -568,6 +654,7 @@ class SessionViewModel(
                 repository.saveSession(draft)
                 scheduler.cancel()
                 chimeJob?.cancel()
+                countdownJob?.cancel()
                 _state.value = current.copy(saved = true, askDiscard = false)
             } catch (_: SQLiteConstraintException) {
                 _state.value = current.copy(failed = true, blocked = true)
@@ -580,6 +667,7 @@ class SessionViewModel(
         scheduler.cancel()
         if (seconds <= 0) {
             _state.value = _state.value.copy(restEndsAt = null)
+            maybeAutoStart()
             return
         }
         val endsAt = clock.instant().toEpochMilli() + seconds * 1000L
@@ -588,19 +676,195 @@ class SessionViewModel(
         chimeJob = viewModelScope.launch {
             val wait = endsAt - System.currentTimeMillis()
             if (wait > 0) delay(wait)
-            if (_state.value.restEndsAt == endsAt) RestChime.playOnce(appContext, endsAt)
+            if (_state.value.restEndsAt != endsAt) return@launch
+            RestChime.playOnce(appContext, endsAt)
+            maybeAutoStart()
         }
+    }
+
+    private fun maybeAutoStart() {
+        val current = _state.value
+        val step = current.steps.getOrNull(current.index) ?: return
+        if (step.type != ExerciseType.TIMED || current.countdownPhase != null) return
+        if (!TimedFlow.autoStarts(step.setNumber, restingNow(current))) return
+        if (countdownSeconds(step.type, step.plan) == null) return
+        startCountdown(step)
+    }
+
+    private fun startCountdown(step: SessionStep) {
+        val seconds = countdownSeconds(step.type, step.plan) ?: return
+        countdownJob?.cancel()
+        val phase = if (step.perSide) CountdownPhase.LEFT else CountdownPhase.SINGLE
+        val endsAt = clock.instant().toEpochMilli() + seconds * 1000L
+        _state.value = _state.value.copy(
+            restEndsAt = null,
+            countdownEndsAt = endsAt,
+            countdownPhase = phase,
+            countdownTotal = seconds,
+        )
+        countdownJob = viewModelScope.launch {
+            delayUntil(endsAt)
+            if (!stillCounting(endsAt)) return@launch
+            if (phase == CountdownPhase.LEFT && step.perSide) {
+                RestChime.playSide(appContext)
+                val rightEnds = clock.instant().toEpochMilli() + seconds * 1000L
+                _state.value = _state.value.copy(
+                    countdownEndsAt = rightEnds,
+                    countdownPhase = CountdownPhase.RIGHT,
+                )
+                delayUntil(rightEnds)
+                if (!stillCounting(rightEnds)) return@launch
+                RestChime.playOnce(appContext, -rightEnds)
+            } else {
+                RestChime.playOnce(appContext, -endsAt)
+            }
+            if (_state.value.countdownPhase == CountdownPhase.RIGHT ||
+                _state.value.countdownPhase == CountdownPhase.SINGLE ||
+                _state.value.countdownPhase == phase
+            ) {
+                _state.value = _state.value.copy(countdownPhase = CountdownPhase.DONE, countdownEndsAt = null)
+            }
+        }
+    }
+
+    private suspend fun delayUntil(endsAt: Long) {
+        val wait = endsAt - System.currentTimeMillis()
+        if (wait > 0) delay(wait)
+    }
+
+    private fun stillCounting(endsAt: Long): Boolean = _state.value.countdownEndsAt == endsAt
+
+    private fun restingNow(state: SessionUi): Boolean {
+        val ends = state.restEndsAt ?: return false
+        return ends > System.currentTimeMillis()
+    }
+
+    private suspend fun buildSteps(graph: WorkoutGraph, chosen: Map<Long, Int>): List<SessionStep> {
+        val steps = mutableListOf<SessionStep>()
+        for (slot in graph.slots) {
+            if (slot.alternatives.isEmpty()) continue
+            val offered = Rotation.normalize(slot.slot.rotationIndex, slot.alternatives.size)
+            val visible = Rotation.normalize(chosen[slot.slot.id] ?: offered, slot.alternatives.size)
+            val due = slot.alternatives[visible]
+            val sets = due.sets
+            sets.forEachIndexed { index, set ->
+                val exercise = due.exercise
+                steps += SessionStep(
+                    slotId = slot.slot.id,
+                    alternativeId = due.alternative.id,
+                    exerciseId = exercise.id,
+                    exerciseName = exercise.name,
+                    type = exercise.type.toExerciseType(),
+                    category = exercise.category.toExerciseCategory(),
+                    setPosition = set.position,
+                    setNumber = index + 1,
+                    setCount = sets.size,
+                    plan = set.toValues(),
+                    rotationIndex = offered,
+                    alternativeIndex = visible,
+                    alternativeCount = slot.alternatives.size,
+                    note = exercise.note,
+                    photoFile = exercise.photoFile,
+                    perSide = exercise.perSide,
+                    lastTime = repository.lastValues(exercise.id, set.position),
+                    increments = Increments(
+                        weightKg = exercise.weightIncrementKg,
+                        durationSec = exercise.durationIncrementSec,
+                        distanceKm = exercise.distanceIncrementKm,
+                        durationMin = exercise.durationIncrementMin,
+                    ),
+                    restSecondsOverride = due.alternative.restSecondsOverride,
+                )
+            }
+        }
+        return steps
+    }
+
+    private fun rebase(
+        current: SessionUi,
+        newSteps: List<SessionStep>,
+        focusSlot: Long?,
+        focusSet: Int?,
+        keepCountdown: Boolean,
+    ): SessionUi {
+        val oldByKey = current.steps.mapIndexed { index, step -> (step.slotId to step.setNumber) to index }.toMap()
+        val actuals = newSteps.map { step ->
+            val old = oldByKey[step.slotId to step.setNumber]
+            if (old != null && old in current.completed) current.actuals[old] else step.plan
+        }
+        val completed = newSteps.mapIndexedNotNullTo(mutableSetOf()) { index, step ->
+            val old = oldByKey[step.slotId to step.setNumber]
+            if (old != null && old in current.completed) index else null
+        }
+        val oldCurrent = current.steps.getOrNull(current.index)
+        val rawIndex = when {
+            focusSlot != null -> indexOfSet(newSteps, focusSlot, focusSet ?: 1)
+            oldCurrent == null -> current.index.coerceAtMost(newSteps.size)
+            else -> {
+                val exact = newSteps.indexOfFirst {
+                    it.slotId == oldCurrent.slotId && it.setNumber == oldCurrent.setNumber
+                }
+                if (exact >= 0) exact else {
+                    val last = newSteps.indexOfLast { it.slotId == oldCurrent.slotId }
+                    if (last >= 0) last else current.index.coerceAtMost(newSteps.size)
+                }
+            }
+        }
+        val missingSet = oldCurrent != null && focusSlot == null &&
+            newSteps.none { it.slotId == oldCurrent.slotId && it.setNumber == oldCurrent.setNumber }
+        var index = rawIndex.coerceIn(0, newSteps.size)
+        if (missingSet && index in completed) {
+            index = (index + 1..newSteps.size).firstOrNull { it == newSteps.size || it !in completed } ?: newSteps.size
+        }
+        val landed = newSteps.getOrNull(index)
+        val sameCountdown = keepCountdown && oldCurrent != null && landed != null &&
+            landed.slotId == oldCurrent.slotId &&
+            landed.setNumber == oldCurrent.setNumber &&
+            landed.alternativeId == oldCurrent.alternativeId &&
+            landed.perSide == oldCurrent.perSide &&
+            landed.plan.durationSec == oldCurrent.plan.durationSec
+        if (!sameCountdown) countdownJob?.cancel()
+        return current.copy(
+            loading = false,
+            workoutName = workoutName,
+            steps = newSteps,
+            actuals = actuals,
+            completed = completed,
+            index = index,
+            adjusting = false,
+            countdownEndsAt = if (sameCountdown) current.countdownEndsAt else null,
+            countdownPhase = if (sameCountdown) current.countdownPhase else null,
+            countdownTotal = if (sameCountdown) current.countdownTotal else 0,
+            photoOpen = false,
+        )
+    }
+
+    private fun indexOfSet(steps: List<SessionStep>, slotId: Long, setNumber: Int): Int {
+        val matches = steps.indices.filter { steps[it].slotId == slotId }
+        return matches.firstOrNull { steps[it].setNumber == setNumber } ?: matches.lastOrNull() ?: steps.size
     }
 
     override fun onCleared() {
         chimeJob?.cancel()
+        countdownJob?.cancel()
         scheduler.cancel()
     }
 }
 
+private fun SessionUi.canSwitchAlternative(): Boolean {
+    val step = steps.getOrNull(index) ?: return false
+    val started = steps.indices.any { i -> steps[i].slotId == step.slotId && i in completed }
+    return AlternativeSwitch.allowed(step.alternativeCount, started, countdownPhase != null, adjusting)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SessionScreen(state: SessionUi, vm: SessionViewModel, onLeave: () -> Unit) {
+private fun SessionScreen(
+    state: SessionUi,
+    vm: SessionViewModel,
+    onLeave: () -> Unit,
+    onEditExercise: (Long, Long) -> Unit,
+) {
     val step = state.steps.getOrNull(state.index)
     val sessionOpen = !state.loading && !state.blocked && !state.missing
     var menuOpen by remember { mutableStateOf(false) }
@@ -628,7 +892,8 @@ private fun SessionScreen(state: SessionUi, vm: SessionViewModel, onLeave: () ->
                 },
                 navigationIcon = {
                     IconButton(onClick = {
-                        if (state.completed.isEmpty()) onLeave() else vm.requestDiscard()
+                        if (state.photoOpen) vm.closePhoto()
+                        else if (state.completed.isEmpty()) onLeave() else vm.requestDiscard()
                     }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
@@ -646,6 +911,15 @@ private fun SessionScreen(state: SessionUi, vm: SessionViewModel, onLeave: () ->
                                     vm.requestDiscard()
                                 },
                             )
+                            if (step != null) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.edit_exercise)) },
+                                    onClick = {
+                                        menuOpen = false
+                                        onEditExercise(step.exerciseId, step.alternativeId)
+                                    },
+                                )
+                            }
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.save_and_finish)) },
                                 enabled = state.completed.isNotEmpty(),
@@ -669,12 +943,14 @@ private fun SessionScreen(state: SessionUi, vm: SessionViewModel, onLeave: () ->
             )
             state.missing -> Text(stringResource(R.string.plan_empty), modifier = Modifier.padding(padding).padding(16.dp))
             else -> Column(Modifier.padding(padding).fillMaxSize()) {
+                val canSwitch = state.canSwitchAlternative()
                 BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                     Column(
                         Modifier
                             .fillMaxWidth()
                             .heightIn(min = maxHeight)
                             .verticalScroll(rememberScrollState())
+                            .then(alternativeSwipe(canSwitch, step, vm))
                             .padding(horizontal = 16.dp, vertical = 8.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
@@ -686,12 +962,25 @@ private fun SessionScreen(state: SessionUi, vm: SessionViewModel, onLeave: () ->
                                 style = trainingText(MaterialTheme.typography.headlineSmall),
                                 textAlign = TextAlign.Center,
                             )
+                            if (state.steps.isNotEmpty() && state.completed.isNotEmpty()) {
+                                FinishButton(onClick = vm::save)
+                            }
                         } else {
                             val actual = state.actuals[state.index]
+                            val timed = step.type == ExerciseType.TIMED
+                            val phase = state.countdownPhase
+                            val started = phase != null
+                            val showPlay = TimedFlow.showPlay(timed, started, resting)
+                            val showChecks = TimedFlow.showChecks(timed, started, phase == CountdownPhase.DONE, resting)
                             Text(
                                 step.exerciseName,
                                 style = trainingText(MaterialTheme.typography.headlineSmall),
                                 textAlign = TextAlign.Center,
+                            )
+                            ExerciseNoteRow(
+                                note = step.note,
+                                hasPhoto = step.photoFile != null,
+                                onPhoto = vm::openPhoto,
                             )
                             ParameterLine(
                                 stringResource(R.string.set_name),
@@ -700,8 +989,13 @@ private fun SessionScreen(state: SessionUi, vm: SessionViewModel, onLeave: () ->
                             if (!state.adjusting) {
                                 PlannedParameters(step)
                             }
-                            countdownSeconds(step.type, step.plan)?.let { seconds ->
-                                ExerciseCountdown(stepKey = state.index, totalSeconds = seconds)
+                            if (step.type == ExerciseType.CARDIO) {
+                                countdownSeconds(step.type, step.plan)?.let { seconds ->
+                                    ExerciseCountdown(stepKey = state.index, totalSeconds = seconds)
+                                }
+                            }
+                            if (timed && phase != null && phase != CountdownPhase.DONE) {
+                                TimedCountdown(phase = phase, endsAt = state.countdownEndsAt)
                             }
                             if (state.adjusting) {
                                 when (step.type) {
@@ -744,6 +1038,9 @@ private fun SessionScreen(state: SessionUi, vm: SessionViewModel, onLeave: () ->
                                     )
                                 }
                             }
+                            if (showPlay) {
+                                PlayButton(onClick = vm::play)
+                            }
                             if (state.adjusting) {
                                 CheckButton(
                                     onClick = vm::confirmAdjusted,
@@ -751,7 +1048,7 @@ private fun SessionScreen(state: SessionUi, vm: SessionViewModel, onLeave: () ->
                                     container = Color(0xFF2E7D32),
                                     modifier = Modifier.fillMaxWidth(0.3f),
                                 )
-                            } else {
+                            } else if (showChecks) {
                                 Row(
                                     Modifier.fillMaxWidth(0.6f),
                                     horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -781,11 +1078,18 @@ private fun SessionScreen(state: SessionUi, vm: SessionViewModel, onLeave: () ->
                         }
                     }
                 }
+                if (step != null && step.alternativeCount > 0) {
+                    AlternativeDots(count = step.alternativeCount, selected = step.alternativeIndex)
+                }
             }
         }
     }
     if (resting) {
         Box(Modifier.fillMaxSize().background(restTint))
+    }
+    if (state.photoOpen) {
+        val name = step?.photoFile
+        if (name != null) PhotoOverlay(name = name, onClose = vm::closePhoto)
     }
     }
     if (state.askDiscard) {
@@ -800,6 +1104,158 @@ private fun SessionScreen(state: SessionUi, vm: SessionViewModel, onLeave: () ->
                 TextButton(onClick = vm::dismissDiscard) { Text(stringResource(R.string.cancel)) }
             },
         )
+    }
+}
+
+@Composable
+private fun alternativeSwipe(enabled: Boolean, step: SessionStep?, vm: SessionViewModel): Modifier {
+    if (!enabled || step == null) return Modifier
+    return Modifier.pointerInput(step.slotId, step.alternativeIndex) {
+        var accumulated = 0f
+        val threshold = 64.dp.toPx()
+        detectHorizontalDragGestures(
+            onDragEnd = {
+                when {
+                    accumulated <= -threshold -> vm.switchAlternative(1)
+                    accumulated >= threshold -> vm.switchAlternative(-1)
+                }
+                accumulated = 0f
+            },
+            onDragCancel = { accumulated = 0f },
+            onHorizontalDrag = { _, amount -> accumulated += amount },
+        )
+    }
+}
+
+@Composable
+private fun ExerciseNoteRow(note: String?, hasPhoto: Boolean, onPhoto: () -> Unit) {
+    if (note.isNullOrBlank() && !hasPhoto) return
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        if (!note.isNullOrBlank()) {
+            Text(
+                note,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+        }
+        if (hasPhoto) {
+            IconButton(onClick = onPhoto) {
+                Icon(Icons.Filled.Image, contentDescription = stringResource(R.string.photo_show))
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayButton(onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(0.3f).height(48.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color(0xFFF9A825),
+            contentColor = Color.Black,
+        ),
+    ) {
+        Icon(Icons.Filled.PlayArrow, contentDescription = stringResource(R.string.play), modifier = Modifier.size(24.dp))
+    }
+}
+
+@Composable
+private fun FinishButton(onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(0.3f).height(48.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color(0xFF2E7D32),
+            contentColor = Color.White,
+        ),
+    ) {
+        Icon(
+            Icons.Filled.SportsScore,
+            contentDescription = stringResource(R.string.save_and_finish),
+            modifier = Modifier.size(24.dp),
+        )
+    }
+}
+
+@Composable
+private fun TimedCountdown(phase: CountdownPhase, endsAt: Long?) {
+    if (endsAt == null) return
+    var now by remember(endsAt) { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(endsAt) {
+        while (System.currentTimeMillis() < endsAt) {
+            now = System.currentTimeMillis()
+            delay(200)
+        }
+        now = System.currentTimeMillis()
+    }
+    val remaining = ((endsAt - now).coerceAtLeast(0) + 999) / 1000
+    val label = when (phase) {
+        CountdownPhase.LEFT -> stringResource(R.string.side_left)
+        CountdownPhase.RIGHT -> stringResource(R.string.side_right)
+        else -> stringResource(R.string.exercise_timer)
+    }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, style = trainingText(MaterialTheme.typography.titleMedium), textAlign = TextAlign.Center)
+        Text(
+            "%d:%02d".format(remaining / 60, remaining % 60),
+            style = trainingText(MaterialTheme.typography.displaySmall),
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
+private fun AlternativeDots(count: Int, selected: Int) {
+    Row(
+        Modifier.fillMaxWidth().padding(bottom = 12.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        repeat(count) { index ->
+            val emphasized = index == selected
+            Box(
+                Modifier
+                    .padding(horizontal = 4.dp)
+                    .size(if (emphasized) 10.dp else 6.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (emphasized) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
+                        },
+                    ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PhotoOverlay(name: String, onClose: () -> Unit) {
+    val context = LocalContext.current
+    val bitmap = remember(name) {
+        val file = ExercisePhotos.file(context, name)
+        if (!file.exists()) null else BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap()
+    }
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap,
+                contentDescription = stringResource(R.string.photo),
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit,
+            )
+        }
+        IconButton(onClick = onClose, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)) {
+            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close), tint = Color.White)
+        }
     }
 }
 

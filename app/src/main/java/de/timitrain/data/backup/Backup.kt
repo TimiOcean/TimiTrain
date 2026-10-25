@@ -32,6 +32,9 @@ data class BackupExercise(
     val durationIncrementSec: Int? = null,
     val distanceIncrementKm: Double? = null,
     val durationIncrementMin: Int? = null,
+    val note: String? = null,
+    val photoFile: String? = null,
+    val perSide: Boolean = false,
     val defaultSets: List<BackupDefaultSet> = emptyList(),
 )
 

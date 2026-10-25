@@ -24,6 +24,13 @@ object RestChime {
         tone.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 700)
         Handler(Looper.getMainLooper()).postDelayed({ tone.release() }, 900)
     }
+
+    /** A shorter, higher beep so a side change is not the rest tone. */
+    fun playSide(context: Context) {
+        val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 100)
+        tone.startTone(ToneGenerator.TONE_PROP_BEEP, 280)
+        Handler(Looper.getMainLooper()).postDelayed({ tone.release() }, 450)
+    }
 }
 
 class RestAlarmReceiver : BroadcastReceiver() {

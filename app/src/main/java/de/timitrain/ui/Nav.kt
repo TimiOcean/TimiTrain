@@ -49,13 +49,15 @@ object Routes {
     const val WEEK = "week"
     const val EXERCISES = "exercises"
     const val EXERCISE_NEW = "exercise/new"
-    const val EXERCISE_EDIT = "exercise/{exerciseId}"
+    const val EXERCISE_EDIT = "exercise/{exerciseId}?alternative={alternativeId}"
     const val WORKOUT = "workout/{workoutId}"
     const val PICK = "train/pick"
     const val SESSION = "session/{workoutId}?makeup={makeup}"
     const val DAY = "analyse/{date}"
 
-    fun exerciseEdit(id: Long) = "exercise/$id"
+    fun exerciseEdit(id: Long, alternativeId: Long = -1L): String {
+        return if (alternativeId < 0) "exercise/$id" else "exercise/$id?alternative=$alternativeId"
+    }
     fun workout(id: Long) = "workout/$id"
     fun session(workoutId: Long, makeupDate: String? = null): String {
         return if (makeupDate.isNullOrBlank()) {
@@ -149,9 +151,22 @@ fun TimiTrainNav() {
                     },
                 )
             }
-            composable(Routes.EXERCISE_EDIT) { entry ->
+            composable(
+                route = Routes.EXERCISE_EDIT,
+                arguments = listOf(
+                    navArgument("alternativeId") {
+                        type = NavType.LongType
+                        defaultValue = -1L
+                    },
+                ),
+            ) { entry ->
                 val id = entry.arguments?.getString("exerciseId")?.toLongOrNull()
-                ExerciseEditRoute(exerciseId = id, onBack = { nav.popBackStack() })
+                val alternativeId = entry.arguments?.getLong("alternativeId") ?: -1L
+                ExerciseEditRoute(
+                    exerciseId = id,
+                    alternativeId = alternativeId,
+                    onBack = { nav.popBackStack() },
+                )
             }
             composable(Routes.WORKOUT) { entry ->
                 val id = entry.arguments?.getString("workoutId")?.toLongOrNull()
@@ -188,6 +203,9 @@ fun TimiTrainNav() {
                     makesUpForDate = makeup,
                     onFinished = {
                         nav.popBackStack(Routes.TRAIN, inclusive = false)
+                    },
+                    onEditExercise = { exerciseId, alternativeId ->
+                        nav.navigate(Routes.exerciseEdit(exerciseId, alternativeId))
                     },
                 )
             }

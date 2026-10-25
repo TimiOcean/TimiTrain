@@ -71,6 +71,9 @@ class TimiTrainRepository(
         increments: Increments,
         defaultSets: List<SetValues>,
         category: de.timitrain.domain.ExerciseCategory = de.timitrain.domain.ExerciseCategory.STRENGTH,
+        note: String? = null,
+        photoFile: String? = null,
+        perSide: Boolean = false,
     ): Long = db.withTransaction {
         val id = db.exercises().insert(
             ExerciseEntity(
@@ -81,6 +84,9 @@ class TimiTrainRepository(
                 durationIncrementSec = increments.durationSec,
                 distanceIncrementKm = increments.distanceKm,
                 durationIncrementMin = increments.durationMin,
+                note = note?.trim()?.ifBlank { null },
+                photoFile = photoFile?.trim()?.ifBlank { null },
+                perSide = perSide && type == ExerciseType.TIMED,
             ),
         )
         insertDefaultSets(id, defaultSets)
@@ -91,11 +97,25 @@ class TimiTrainRepository(
         return db.exercises().listDefaults(exerciseId).map { it.toValues() }
     }
 
+    suspend fun plannedValues(alternativeId: Long): List<SetValues> {
+        return db.plannedSets().listForAlternative(alternativeId).map { it.toValues() }
+    }
+
+    suspend fun replaceAlternativeSets(alternativeId: Long, sets: List<SetValues>) = db.withTransaction {
+        db.plannedSets().listForAlternative(alternativeId).forEach { db.plannedSets().delete(it.id) }
+        sets.forEachIndexed { index, values ->
+            db.plannedSets().insert(values.toEntity(alternativeId, index))
+        }
+    }
+
     suspend fun updateExercise(
         id: Long,
         increments: Increments,
         defaultSets: List<SetValues>,
         category: de.timitrain.domain.ExerciseCategory,
+        note: String? = null,
+        photoFile: String? = null,
+        perSide: Boolean = false,
     ) = db.withTransaction {
         val existing = db.exercises().get(id) ?: return@withTransaction
         db.exercises().update(
@@ -106,6 +126,9 @@ class TimiTrainRepository(
                 durationIncrementSec = increments.durationSec,
                 distanceIncrementKm = increments.distanceKm,
                 durationIncrementMin = increments.durationMin,
+                note = note?.trim()?.ifBlank { null },
+                photoFile = photoFile?.trim()?.ifBlank { null },
+                perSide = perSide && existing.type == ExerciseType.TIMED.stored(),
             ),
         )
         db.exercises().deleteDefaults(id)
@@ -416,7 +439,7 @@ class TimiTrainRepository(
             val count = db.alternatives().listForSlot(completed.slotId).size
             db.slots().updateRotation(
                 completed.slotId,
-                Rotation.afterSave(completed.rotationIndex, count, true),
+                Rotation.afterPerformed(completed.alternativeIndex, count),
             )
         }
     }
@@ -659,6 +682,7 @@ data class CompletedSetDraft(
     val plan: SetValues,
     val actual: SetValues,
     val rotationIndex: Int,
+    val alternativeIndex: Int = 0,
 )
 
 data class SessionDraft(
@@ -726,6 +750,9 @@ private fun ExerciseEntity.toBackup(defaults: List<ExerciseDefaultSetEntity>): B
         durationIncrementSec = durationIncrementSec,
         distanceIncrementKm = distanceIncrementKm,
         durationIncrementMin = durationIncrementMin,
+        note = note,
+        photoFile = photoFile,
+        perSide = perSide,
         defaultSets = defaults.sortedBy { it.position }.map { set ->
             BackupDefaultSet(
                 id = set.id,
@@ -782,6 +809,9 @@ private fun BackupExercise.toEntity(): ExerciseEntity {
         durationIncrementSec = durationIncrementSec,
         distanceIncrementKm = distanceIncrementKm,
         durationIncrementMin = durationIncrementMin,
+        note = note,
+        photoFile = photoFile,
+        perSide = perSide,
     )
 }
 
